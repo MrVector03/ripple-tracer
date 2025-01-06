@@ -22,6 +22,14 @@ WaterFrameBuffers w_fbo;
 
 static GLuint vao, vbo, shader_program_id, uni_M, uni_VP, uni_phase, uni_camera_pos, gui_texture;
 
+// SKYBOX
+static rafgl_texture_t skybox_texture;
+
+static GLuint skybox_shader, skybox_shader_cell;
+static GLuint skybox_uni_P, skybox_uni_V;
+static GLuint skybox_cell_uni_P, skybox_cell_uni_V;
+
+static rafgl_meshPUN_t skybox_mesh;
 
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
@@ -36,7 +44,21 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     // BUFFERS
     frame_buffers_core_init(w_fbo, width, height);
 
-    // GUI
+    // SKYBOX
+    rafgl_texture_load_cubemap_named(&skybox_texture, "above_the_sea_2", "jpg");
+    skybox_shader = rafgl_program_create_from_name("custom_skybox_shader");
+    skybox_shader_cell = rafgl_program_create_from_name("custom_skybox_shader_cell");
+
+    skybox_uni_P = glGetUniformLocation(skybox_shader, "uni_P");
+    skybox_uni_V = glGetUniformLocation(skybox_shader, "uni_V");
+
+    skybox_cell_uni_P = glGetUniformLocation(skybox_shader_cell, "uni_P");
+    skybox_cell_uni_V = glGetUniformLocation(skybox_shader_cell, "uni_V");
+
+    rafgl_meshPUN_init(&skybox_mesh);
+    rafgl_meshPUN_load_cube(&skybox_mesh, 1.0f);
+
+    // GUI // TODO: NO IDEA WHAT THIS DOES
     glGenTextures(1, &gui_texture);
     glBindTexture(GL_TEXTURE_2D, gui_texture);
 
@@ -151,7 +173,6 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
 
 void main_state_render(GLFWwindow *window, void *args)
 {
-
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
     glViewport(0, 0, width, height);
@@ -160,6 +181,19 @@ void main_state_render(GLFWwindow *window, void *args)
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
+
+
+    // SKYBOX
+    glUseProgram(skybox_shader);
+    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
+    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
+    glBindVertexArray(skybox_mesh.vao_id);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
+
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+
+    // SHADER
     glUseProgram(shader_program_id);
 
     // BIND VAD AND DRAW
