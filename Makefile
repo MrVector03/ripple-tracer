@@ -1,5 +1,5 @@
 CC = gcc
-IN = main.c src/main_state.c src/glad/glad.c src/water/frame_buffers.c src/utility.c
+IN = main.c src/main_state.c src/glad/glad.c src/water/frame_buffers.c src/utility/utility.c
 OUT = main.out
 CFLAGS = -Wall -DGLFW_INCLUDE_NONE
 LFLAGS = -lglfw -ldl -lm
