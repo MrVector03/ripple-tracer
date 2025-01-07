@@ -7,8 +7,13 @@
 
 #include "glad/glad.h"
 
-GLuint load_skybox(const char *faces[6]);
+typedef struct {
+	float x;
+	float y;
+	float z;
+	float w;
+} Vector4f;
 
-void setup_skybox(GLuint skybox_vao, GLuint skybox_vbo);
+void load_vector(GLuint location, Vector4f vector);
 
 #endif //UTILITY_H
