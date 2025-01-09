@@ -56,7 +56,7 @@ vec3_t aim_dir = {0.0f, 0.0f, 0.0f};
 
 float camera_angle = -M_PIf / 2.0f;
 float angle_speed = 0.2f * M_PIf;
-float move_speed = 0.8f;
+float move_speed = 2.0f;
 
 float hoffset = -0.35f * M_PIf;
 
@@ -72,9 +72,9 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     time += delta_time;
 
     vec3_t right_dir = v3_cross(camera_up, aim_dir); // Right direction
-    if (game_data->keys_down['A'])
-        camera_position = v3_sub(camera_position, v3_muls(right_dir, move_speed * delta_time));
     if (game_data->keys_down['D'])
+        camera_position = v3_sub(camera_position, v3_muls(right_dir, move_speed * delta_time));
+    if (game_data->keys_down['A'])
         camera_position = v3_add(camera_position, v3_muls(right_dir, move_speed * delta_time));
 
     if (game_data->is_lmb_down) {
@@ -105,8 +105,8 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     if (game_data->keys_down['W']) camera_position = v3_add(camera_position, v3_muls(aim_dir, move_speed * delta_time));
     if (game_data->keys_down['S']) camera_position = v3_sub(camera_position, v3_muls(aim_dir, move_speed * delta_time));
 
-    if (game_data->keys_down[RAFGL_KEY_SPACE]) camera_position.y += move_speed * delta_time;
-    if (game_data->keys_down[RAFGL_KEY_LEFT_SHIFT]) camera_position.y -= move_speed * delta_time;
+    if (game_data->keys_down[RAFGL_KEY_LEFT_SHIFT]) camera_position.y += move_speed * delta_time;
+    if (game_data->keys_down[RAFGL_KEY_LEFT_CONTROL]) camera_position.y -= move_speed * delta_time;
     printf("Camera Position: (%f, %f, %f)\n", camera_position.x, camera_position.y, camera_position.z);
 
     float aspect = ((float)(game_data->raster_width)) / game_data->raster_height;
@@ -145,7 +145,6 @@ void main_state_render(GLFWwindow *window, void *args)
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
-
 }
 
 
