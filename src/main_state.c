@@ -7,13 +7,13 @@
 #include <utility.h>
 
 static float vertices[] = {
-    -0.5f, 0.0f, -0.5f,  // Bottom-left
-    0.5f, 0.0f, -0.5f,  // Bottom-right
-    0.5f, 0.0f,  0.5f,  // Top-right
+    -0.5f, 0.0f, -0.5f,
+    0.5f, 0.0f, -0.5f,
+    0.5f, 0.0f,  0.5f,
 
-   -0.5f, 0.0f, -0.5f,  // Bottom-left
-    0.5f, 0.0f,  0.5f,  // Top-right
-   -0.5f, 0.0f,  0.5f   // Top-left
+   -0.5f, 0.0f, -0.5f,
+    0.5f, 0.0f,  0.5f,
+   -0.5f, 0.0f,  0.5f
 };
 
 WaterFrameBuffers w_fbo;
@@ -211,10 +211,8 @@ void main_state_render(GLFWwindow *window, void *args)
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Enable depth testing
     glEnable(GL_DEPTH_TEST);
 
-    // Adjust near and far clipping planes
     float aspect = (float)width / (float)height;
     projection = m4_perspective(fov, aspect, 0.1f, 1000.0f); // Adjusted far clipping plane
 
@@ -233,11 +231,9 @@ void main_state_render(GLFWwindow *window, void *args)
     // Render Meshes
     glUseProgram(mesh_shader_program);
 
-    // Apply translation to the mesh model matrix
     mat4_t mesh_model = m4_translation(vec3(2.0f, 0.0f, 0.0f));
     glUniformMatrix4fv(uni_M_mesh, 1, GL_FALSE, (void*) mesh_model.m);
 
-    // Set uniforms for mesh shader
     glUniformMatrix4fv(uni_M_mesh, 1, GL_FALSE, (void*) mesh_model.m);
     glUniformMatrix4fv(uni_VP_mesh, 1, GL_FALSE, (void*) view_projection.m);
     glUniform3f(light_pos_loc, 1.0f, 1.0f, 1.0f);
@@ -245,7 +241,6 @@ void main_state_render(GLFWwindow *window, void *args)
     glUniform3f(view_pos_loc, camera_position.x, camera_position.y, camera_position.z);
     glUniform3f(object_color_loc, 0.0f, 0.3f, 0.7f);
 
-    // Bind VAO and draw meshes
     glBindVertexArray(meshes[selected_mesh].vao_id);
     glDrawArrays(GL_TRIANGLES, 0, meshes[selected_mesh].vertex_count);
     glBindVertexArray(0);
@@ -253,19 +248,16 @@ void main_state_render(GLFWwindow *window, void *args)
     // Render Water
     glUseProgram(shader_program_id);
 
-    // Set uniforms for water shader
     glUniformMatrix4fv(uni_M, 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
     glUniform1f(uni_phase, time * 0.1f);
     glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
     glUniform4f(location_plane, plane.x, plane.y, plane.z, plane.w);
 
-    // Bind VAO and draw water quad
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
 
-    // Disable depth testing
     glDisable(GL_DEPTH_TEST);
 }
 
