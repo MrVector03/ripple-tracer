@@ -1,4 +1,3 @@
-#include <frame_buffers.h>
 #include <main_state.h>
 #include <glad/glad.h>
 #include <math.h>
@@ -16,10 +15,7 @@ static float vertices[] = {
    -0.5f, 0.0f,  0.5f   // Top-left
 };
 
-WaterFrameBuffers w_fbo;
-
 static GLuint vao, vbo, shader_program_id, uni_M, uni_VP, uni_phase, uni_camera_pos, gui_texture;
-static GLuint mesh_shader_program, uni_M_mesh, uni_VP_mesh, light_pos_loc, light_color_loc, view_pos_loc, object_color_loc;
 static GLuint location_plane;
 
 // SKYBOX
@@ -33,28 +29,10 @@ static rafgl_meshPUN_t skybox_mesh;
 
 static Vector4f plane = {0.0f, -1.0f, 0.0f, 15.0f};
 
-// MESH
-static rafgl_meshPUN_t meshes[3];
-static const char* mesh_names[3] = {"res/models/armadillo.obj", "res/models/bunny.obj", "res/models/jordan_1_TS.obj"};
-
 int num_meshes;
 
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
-    // MESH
-    num_meshes = sizeof(mesh_names) / sizeof(mesh_names[0]);
-    for (int i = 0; i < num_meshes; i++) {
-        rafgl_log(RAFGL_INFO, "LOADING MESH: %d\n", i + 1);
-        rafgl_meshPUN_init(meshes + i);
-        rafgl_meshPUN_load_from_OBJ(meshes + i, mesh_names[i]);
-    }
-    mesh_shader_program = rafgl_program_create_from_name("custom_mesh_shader_v1");
-    uni_M_mesh = glGetUniformLocation(mesh_shader_program, "uni_M");
-    uni_VP_mesh = glGetUniformLocation(mesh_shader_program, "uni_VP");
-    light_pos_loc = glGetUniformLocation(mesh_shader_program, "light_pos");
-    light_color_loc = glGetUniformLocation(mesh_shader_program, "light_color");
-    view_pos_loc = glGetUniformLocation(mesh_shader_program, "view_pos");
-    object_color_loc = glGetUniformLocation(mesh_shader_program, "object_color");
 
     // SHADER PROGRAM
     shader_program_id = rafgl_program_create_from_name("custom_water_shader_v1");
@@ -64,9 +42,6 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     uni_phase = glGetUniformLocation(shader_program_id, "uni_phase");
     uni_camera_pos = glGetUniformLocation(shader_program_id, "uni_camera_pos");
     location_plane = glGetUniformLocation(shader_program_id, "plane");
-
-    // BUFFERS
-    frame_buffers_core_init(w_fbo, width, height);
 
     // SKYBOX
     rafgl_texture_load_cubemap_named(&skybox_texture, "above_the_sea_2", "jpg");
@@ -81,17 +56,6 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
 
     rafgl_meshPUN_init(&skybox_mesh);
     rafgl_meshPUN_load_cube(&skybox_mesh, 1.0f);
-
-    // GUI // TODO: NO IDEA WHAT THIS DOES
-    glGenTextures(1, &gui_texture);
-    glBindTexture(GL_TEXTURE_2D, gui_texture);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glBindTexture(GL_TEXTURE_2D, w_fbo.reflection_texture);
 
     // VAO
     glGenVertexArrays(1, &vao);
@@ -137,8 +101,6 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     time += delta_time;
 
     glEnable(GL_CLIP_DISTANCE0);
-
-    bind_reflection_frame_buffer(w_fbo);
 
     // INPUT
     if (1) {
@@ -211,14 +173,12 @@ void main_state_render(GLFWwindow *window, void *args)
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Enable depth testing
     glEnable(GL_DEPTH_TEST);
 
-    // Adjust near and far clipping planes
     float aspect = (float)width / (float)height;
-    projection = m4_perspective(fov, aspect, 0.1f, 1000.0f); // Adjusted far clipping plane
+    projection = m4_perspective(fov, aspect, 0.1f, 1000.0f);
 
-    // Render Skybox
+    // SKYBOX RENDER
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
     glUseProgram(skybox_shader);
@@ -230,49 +190,25 @@ void main_state_render(GLFWwindow *window, void *args)
     glBindVertexArray(0);
     glDepthFunc(GL_LESS); // Reset depth function
 
-    // Render Meshes
-    glUseProgram(mesh_shader_program);
-
-    // Apply translation to the mesh model matrix
-    mat4_t mesh_model = m4_translation(vec3(2.0f, 0.0f, 0.0f));
-    glUniformMatrix4fv(uni_M_mesh, 1, GL_FALSE, (void*) mesh_model.m);
-
-    // Set uniforms for mesh shader
-    glUniformMatrix4fv(uni_M_mesh, 1, GL_FALSE, (void*) mesh_model.m);
-    glUniformMatrix4fv(uni_VP_mesh, 1, GL_FALSE, (void*) view_projection.m);
-    glUniform3f(light_pos_loc, 1.0f, 1.0f, 1.0f);
-    glUniform3f(light_color_loc, 1.0f, 1.0f, 1.0f);
-    glUniform3f(view_pos_loc, camera_position.x, camera_position.y, camera_position.z);
-    glUniform3f(object_color_loc, 0.0f, 0.3f, 0.7f);
-
-    // Bind VAO and draw meshes
-    glBindVertexArray(meshes[selected_mesh].vao_id);
-    glDrawArrays(GL_TRIANGLES, 0, meshes[selected_mesh].vertex_count);
-    glBindVertexArray(0);
-
-    // Render Water
+    // WATER RENDER
     glUseProgram(shader_program_id);
 
-    // Set uniforms for water shader
     glUniformMatrix4fv(uni_M, 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
     glUniform1f(uni_phase, time * 0.1f);
     glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
     glUniform4f(location_plane, plane.x, plane.y, plane.z, plane.w);
 
-    // Bind VAO and draw water quad
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
 
-    // Disable depth testing
     glDisable(GL_DEPTH_TEST);
 }
 
 
 void main_state_cleanup(GLFWwindow *window, void *args)
 {
-    water_buffer_clean_up(w_fbo);
     glDeleteVertexArrays(1, &vao);
     glDeleteBuffers(1, &vbo);
     glDeleteProgram(shader_program_id);
