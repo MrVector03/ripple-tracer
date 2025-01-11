@@ -5,22 +5,39 @@
 #include <game_constants.h>
 #include <utility.h>
 
-static float vertices[] = {
-    // Positions          // Texture Coords
-    -0.5f, 0.0f, -0.5f,   0.0f, 0.0f,  // Bottom-left
-     0.5f, 0.0f, -0.5f,   1.0f, 0.0f,  // Bottom-right
-     0.5f, 0.0f,  0.5f,   1.0f, 1.0f,  // Top-right
+typedef struct _vertex_t
+{                       /* offsets      */
+    vec3_t position;    /* 0            */
+    vec3_t colour;      /* 3 * float    */
+    float alpha;        /* 6 * float    */
+    float u, v;         /* 7 * float    */
+    vec3_t normal;       /* 9 * float    */
+} vertex_t;
 
-    -0.5f, 0.0f, -0.5f,   0.0f, 0.0f,  // Bottom-left
-     0.5f, 0.0f,  0.5f,   1.0f, 1.0f,  // Top-right
-    -0.5f, 0.0f,  0.5f,   0.0f, 1.0f   // Top-left
-};
+vertex_t vertex(vec3_t pos, vec3_t col, float alpha, float u, float v, vec3_t normal)
+{
+    vertex_t vert;
+
+    vert.position = pos;
+    vert.colour = col;
+    vert.alpha = alpha;
+    vert.u = u;
+    vert.v = v;
+    vert.normal = normal;
+
+    return vert;
+}
+
+vertex_t vertices[6];
 
 static GLuint vao, vbo, shader_program_id, uni_M, uni_VP, uni_phase, uni_camera_pos, uni_time;
 static GLuint location_plane;
 
 // SKYBOX
 static rafgl_texture_t skybox_texture;
+
+static rafgl_raster_t water_normal_raster;
+static rafgl_texture_t water_normal_map_tex;
 
 static GLuint skybox_shader, skybox_shader_cell;
 static GLuint skybox_uni_P, skybox_uni_V;
@@ -53,119 +70,149 @@ mat4_t model, view, projection, view_projection;
 
 int selected_mesh = 0;
 
-GLuint reflectionFBO, refractionFBO;
-GLuint reflectionTexture, refractionTexture;
-GLuint reflectionDepthBuffer, refractionDepthBuffer;
+static const int REFLECTION_WIDTH = 320;
+static const int REFLECTION_HEIGHT = 180;
 
-void createFramebuffers(int width, int height) {
-    glGenFramebuffers(1, &reflectionFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFBO);
+static const int REFRACTION_WIDTH = 1280;
+static const int REFRACTION_HEIGHT = 720;
 
-    glGenTextures(1, &reflectionTexture);
-    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+static GLuint reflectionFrameBuffer;
+static GLuint reflectionTexture;
+static GLuint reflectionDepthBuffer;
+
+static GLuint refractionFrameBuffer;
+static GLuint refractionTexture;
+static GLuint refractionDepthTexture;
+
+GLuint create_framebuffer()
+{
+    GLuint framebuffer;
+
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+    return framebuffer;
+}
+
+GLuint create_texture_attachment(int width, int height) {
+    GLuint texture;
+
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflectionTexture, 0);
 
-    glGenRenderbuffers(1, &reflectionDepthBuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, reflectionDepthBuffer);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+
+    return texture;
+}
+
+GLuint create_depth_buffer_attachment(int width, int height) {
+    GLuint depthBuffer;
+
+    glGenRenderbuffers(1, &depthBuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, depthBuffer);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, reflectionDepthBuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
 
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        printf("Reflection Framebuffer not complete!\n");
+    return depthBuffer;
+}
 
-    glGenFramebuffers(1, &refractionFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, refractionFBO);
+GLuint create_depth_texture_attachment(int width, int height) {
+    GLuint depthTexture;
+    glGenTextures(1, &depthTexture);
+    glBindTexture(GL_TEXTURE_2D, depthTexture);
 
-    glGenTextures(1, &refractionTexture);
-    glBindTexture(GL_TEXTURE_2D, refractionTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, refractionTexture, 0);
 
-    glGenRenderbuffers(1, &refractionDepthBuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, refractionDepthBuffer);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, refractionDepthBuffer);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        printf("Refraction Framebuffer not complete!\n");
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexture, 0);
+
+    return depthTexture;
 }
 
-void renderToReflectionFramebuffer() {
-    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFBO);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    mat4_t reflectionView = m4_look_at(
-        vec3(camera_position.x, -camera_position.y, camera_position.z),
-        vec3(camera_target.x, -camera_target.y, camera_target.z),
-        vec3(camera_up.x, -camera_up.y, camera_up.z)
-    );
-
-    mat4_t reflectionViewProjection = m4_mul(projection, reflectionView);
-
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(skybox_shader);
-    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) reflectionView.m);
-    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
-    glBindVertexArray(skybox_mesh.vao_id);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS);
-
-    glUseProgram(shader_program_id);
-    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) reflectionViewProjection.m);
-    glUniform1f(uni_time, time);
-    glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
-
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+void bindFrameBuffer(GLuint framebuffer, int width, int height)
+{
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glViewport(0, 0, width, height);
 }
 
-void renderToRefractionFramebuffer() {
-    glBindFramebuffer(GL_FRAMEBUFFER, refractionFBO);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    mat4_t refractionView = view;
-    mat4_t refractionViewProjection = m4_mul(projection, refractionView);
-
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(skybox_shader);
-    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) refractionView.m);
-    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
-    glBindVertexArray(skybox_mesh.vao_id);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS);
-
-    glUseProgram(shader_program_id);
-    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) refractionViewProjection.m);
-    glUniform1f(uni_time, time);
-    glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
-
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
-
+void unbindCurrentFrameBuffer(int width, int height)
+{
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width, height);
+}
+
+void bindReflectionFrameBuffer()
+{
+    bindFrameBuffer(reflectionFrameBuffer, REFLECTION_WIDTH, REFLECTION_HEIGHT);
+}
+
+void bindRefractionFrameBuffer()
+{
+    bindFrameBuffer(refractionFrameBuffer, REFRACTION_WIDTH, REFRACTION_HEIGHT);
+}
+
+void initialize_reflection_refraction_framebuffers(int width, int height)
+{
+    // Reflection init
+    reflectionFrameBuffer = create_framebuffer();
+    reflectionTexture = create_texture_attachment(REFLECTION_WIDTH, REFLECTION_HEIGHT);
+    reflectionDepthBuffer = create_depth_buffer_attachment(REFLECTION_WIDTH, REFLECTION_HEIGHT);
+    unbindCurrentFrameBuffer(width, height);
+
+
+
+    // Refraction init
+    refractionFrameBuffer = create_framebuffer();
+    refractionTexture = create_texture_attachment(REFRACTION_WIDTH, REFRACTION_HEIGHT);
+    refractionDepthTexture = create_depth_texture_attachment(REFRACTION_WIDTH, REFRACTION_HEIGHT);
+    unbindCurrentFrameBuffer(width, height);
+}
+
+void frame_buffer_cleanup() {
+    glDeleteFramebuffers(1, &reflectionFrameBuffer);
+    glDeleteTextures(1, &reflectionTexture);
+    glDeleteRenderbuffers(1, &reflectionDepthBuffer);
+    glDeleteFramebuffers(1, &refractionFrameBuffer);
+    glDeleteTextures(1, &refractionTexture);
+    glDeleteTextures(1, &refractionDepthTexture);
 }
 
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
-
     // SHADER PROGRAM
+
+    initialize_reflection_refraction_framebuffers(width, height);
+
+    rafgl_raster_load_from_image(&water_normal_raster, "res/images/water_normal.jpg");
+    rafgl_texture_init(&water_normal_map_tex);
+
+    rafgl_texture_load_from_raster(&water_normal_map_tex, &water_normal_raster);
+
+    //glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
+    //glGenerateMipmap(GL_TEXTURE_2D);
+
+    vertices[0] = vertex(vec3( -1.0f,  0.0f,  1.0f), RAFGL_RED, 5.0f, 0.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[1] = vertex(vec3( -1.0f,  0.0f, -1.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[2] = vertex(vec3(  1.0f,  0.0f,  1.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+
+    vertices[3] = vertex(vec3(  1.0f,  0.0f,  1.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[4] = vertex(vec3( -1.0f,  0.0f, -1.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[5] = vertex(vec3(  1.0f,  0.0f, -1.0f), RAFGL_BLUE, 5.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
+
     shader_program_id = rafgl_program_create_from_name("custom_water_shader_v1");
 
 
@@ -190,9 +237,6 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     rafgl_meshPUN_init(&skybox_mesh);
     rafgl_meshPUN_load_cube(&skybox_mesh, 1.0f);
 
-    createFramebuffers(width, height);
-
-
     // VAO
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
@@ -202,15 +246,59 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, position));
     glEnableVertexAttribArray(0);
 
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    // Color attribute
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
     glEnableVertexAttribArray(1);
+
+    // Alpha attribute
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
+    glEnableVertexAttribArray(2);
+
+    // Texture coordinate attribute
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
+    glEnableVertexAttribArray(3);
+
+    // Normal attribute
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
+    glEnableVertexAttribArray(4);
 
     // VAO unbind
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
+}
+
+void render_scene(mat4_t view_projection, float delta_time) {
+    glUseProgram(shader_program_id);
+    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
+    glUniform1f(uni_time, time);
+
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skybox_shader);
+    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
+    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
+    glBindVertexArray(skybox_mesh.vao_id);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+}
+
+void render_water(mat4_t view_project, float delta_time) {
+    glUseProgram(shader_program_id);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+
+    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_project.m);
+    glUniform1f(uni_time, time);
+
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *game_data, void *args) {
@@ -276,9 +364,41 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     }
 
     model = m4_identity();
-    view_projection = m4_mul(projection, view);
-}
 
+    view = m4_look_at(camera_position, camera_target, camera_up);
+    projection = m4_perspective(fov, (float)game_data->raster_width / game_data->raster_height, 0.1f, 1000.0f);
+    view_projection = m4_mul(projection, view);
+
+    // REFLECTION
+    bindReflectionFrameBuffer();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glUniform4f(location_plane, 0.0f, 1.0f, 0.0f, 1.0f);
+    vec3_t reflected_camera_pos = camera_position;
+    reflected_camera_pos.y = -camera_position.y;
+    mat4_t reflected_view = m4_look_at(reflected_camera_pos, camera_target, camera_up);
+
+    render_scene(reflected_view, delta_time);
+
+    // REFRACTION
+    bindRefractionFrameBuffer();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
+    render_scene(view_projection, delta_time);
+
+    unbindCurrentFrameBuffer(game_data->raster_width, game_data->raster_height);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // OTHER
+    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
+    render_scene(view_projection, delta_time);
+
+    render_water(view_projection, delta_time);
+
+    //glfwSwapBuffers(window);
+    //glfwPollEvents();
+}
 
 void main_state_render(GLFWwindow *window, void *args)
 {
@@ -286,30 +406,17 @@ void main_state_render(GLFWwindow *window, void *args)
     glfwGetFramebufferSize(window, &width, &height);
     glViewport(0, 0, width, height);
 
-    // Render to reflection and refraction framebuffers
-    renderToReflectionFramebuffer();
-    renderToRefractionFramebuffer();
-
     // CLEAR
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glEnable(GL_DEPTH_TEST);
+    //glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
 
     float aspect = (float)width / (float)height;
     projection = m4_perspective(fov, aspect, 0.1f, 1000.0f);
 
     // SKYBOX RENDER
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(skybox_shader);
-    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
-    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
-    glBindVertexArray(skybox_mesh.vao_id);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS); // Reset depth function
 
     // WATER RENDER
     glUseProgram(shader_program_id);
@@ -318,16 +425,6 @@ void main_state_render(GLFWwindow *window, void *args)
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
     glUniform1f(uni_time, time);
     glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
-
-    // Bind reflection texture
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
-    glUniform1i(glGetUniformLocation(shader_program_id, "reflectionTexture"), 0);
-
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, refractionTexture);
-    glUniform1i(glGetUniformLocation(shader_program_id, "refractionTexture"), 1);
-
 
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -338,12 +435,7 @@ void main_state_render(GLFWwindow *window, void *args)
 
 void main_state_cleanup(GLFWwindow *window, void *args)
 {
-    glDeleteFramebuffers(1, &reflectionFBO);
-    glDeleteFramebuffers(1, &refractionFBO);
-    glDeleteTextures(1, &reflectionTexture);
-    glDeleteTextures(1, &refractionTexture);
-    glDeleteRenderbuffers(1, &reflectionDepthBuffer);
-    glDeleteRenderbuffers(1, &refractionDepthBuffer);
+    frame_buffer_cleanup();
 }
 
 
