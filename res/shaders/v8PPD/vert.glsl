@@ -1,4 +1,5 @@
-#version 330
+#version 330static GLuint shaders[6], uni_M[6], uni_VP[6], uni_object_colour[6], uni_light_colour[6], uni_ambient[6], uni_camera_position[6];
+
 
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec2 uv;
