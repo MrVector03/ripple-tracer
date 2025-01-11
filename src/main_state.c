@@ -29,6 +29,72 @@ vertex_t vertex(vec3_t pos, vec3_t col, float alpha, float u, float v, vec3_t no
     return vert;
 }
 
+static int p[512];
+
+static int grad3[12][3] = {
+    {1, 1, 0}, {-1, 1, 0}, {1, -1, 0},{-1, -1, 0},
+    {1, 0, 1}, {-1, 0, 1},{1, 0, -1}, {-1, 0, -1},
+    {0, 1, 1},{0, -1, 1}, {0, 1, -1}, {0, -1, -1}
+};
+
+void init_perm() {
+    for (int i = 0; i < 256; ++i) {
+        p[i] = i;
+    }
+    for (int i = 255; i > 0; --i) {
+        int j = rand() % (i + 1);
+        int temp = p[i];
+        p[i] = p[j];
+        p[j] = temp;
+    }
+    for (int i = 0; i < 256; ++i) {
+        p[256 + i] = p[i];
+    }
+}
+
+float fade(float t) {
+    return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+float dot(int* g, float x, float y) {
+    return g[0] * x + g[1] * y;
+}
+
+int* grad(int hash) {
+    return grad3[hash % 12];
+}
+
+float lerp(float a, float b, float t) {
+    return a + t * (b - a);
+}
+
+float perlin(float x, float y) {
+    int X = (int)floor(x) & 255;
+    int Y = (int)floor(y) & 255;
+    float xf = x - floor(x);
+    float yf = y - floor(y);
+    float u = fade(xf);
+    float v = fade(yf);
+
+    int A = p[X] + Y;
+    int AA = p[A];
+    int AB = p[A + 1];
+    int B = p[X + 1] + Y;
+    int BA = p[B];
+    int BB = p[B + 1];
+
+    // Calculate the dot products
+    float gradAA = dot(grad(AA), xf, yf);
+    float gradBA = dot(grad(BA), xf - 1, yf);
+    float gradAB = dot(grad(AB), xf, yf - 1);
+    float gradBB = dot(grad(BB), xf - 1, yf - 1);
+
+    // Interpolate between the values
+    float lerpX1 = lerp(gradAA, gradBA, u);
+    float lerpX2 = lerp(gradAB, gradBB, u);
+    return lerp(lerpX1, lerpX2, v);
+}
+
 vertex_t vertices[6];
 
 static GLuint vao, vbo, shader_program_id, uni_M, uni_VP, uni_phase, uni_camera_pos, uni_time;
@@ -52,14 +118,14 @@ int num_meshes;
 
 float fov = 75.0f;
 
-vec3_t camera_position = {1.013418, 0.693488, 0.864704};
+vec3_t camera_position = {10.013418, 10.693488, 10.864704};
 vec3_t camera_target = {0.0f, 0.0f, 0.0f};
 vec3_t camera_up = {0.0f, 1.0f, 0.0f};
 vec3_t aim_dir = {0.0f, 0.0f, 0.0f};
 
 float camera_angle = -M_PIf / 2.0f;
 float angle_speed = 0.2f * M_PIf;
-float move_speed = 0.8f;
+float move_speed = 8.8f;
 
 float hoffset = -0.35f * M_PIf;
 
@@ -85,9 +151,19 @@ static GLuint refractionFrameBuffer;
 static GLuint refractionTexture;
 static GLuint refractionDepthTexture;
 
+// HILLS
+
 GLuint hill_shader_program_id;
 GLuint hill_vao, hill_vbo, hill_ebo;
 int hill_vertex_count, hill_index_count;
+rafgl_raster_t hill_raster;
+rafgl_texture_t hill_texture;
+static GLuint hill_texture_id;
+
+// LIGHT SOURCE
+GLuint depthFBO;
+GLuint depthMap;
+GLuint lightning_shader_program_id;
 
 
 GLuint create_framebuffer()
@@ -179,8 +255,6 @@ void initialize_reflection_refraction_framebuffers(int width, int height)
     reflectionDepthBuffer = create_depth_buffer_attachment(REFLECTION_WIDTH, REFLECTION_HEIGHT);
     unbindCurrentFrameBuffer(width, height);
 
-
-
     // Refraction init
     refractionFrameBuffer = create_framebuffer();
     refractionTexture = create_texture_attachment(REFRACTION_WIDTH, REFRACTION_HEIGHT);
@@ -197,7 +271,20 @@ void frame_buffer_cleanup() {
     glDeleteTextures(1, &refractionDepthTexture);
 }
 
-vertex_t* generate_hills(int width, int height, float scale, int* vertex_count) {
+float noise(float x, float z) {
+    return 0.0f;
+}
+
+float smoothstep(float x, float river_width, float river_mask) {
+    float t = rafgl_clampf((x - river_width) / (river_mask - river_width), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float mix(float x, float x1, float river_mask) {
+    return x * (1.0f - river_mask) + x1 * river_mask;
+}
+
+vertex_t* generate_hills(int width, int height, float scale, int* vertex_count, float water_level, float river_width) {
     int num_vertices = width * height;
     vertex_t* vertices = (vertex_t*)malloc(num_vertices * sizeof(vertex_t));
     *vertex_count = num_vertices;
@@ -207,28 +294,54 @@ vertex_t* generate_hills(int width, int height, float scale, int* vertex_count) 
 
     srand(time(NULL));
 
+    init_perm();
+
     for (int z = 0; z < height; ++z) {
         for (int x = 0; x < width; ++x) {
-            float random_height = ((float)rand() / RAND_MAX) * scale; // Random height between 0 and scale
-            float y = sinf((x - x_offset) * 0.1f) * cosf((z - z_offset) * 0.1f) * random_height;
-            vertices[z * width + x] = vertex(vec3(x - x_offset, y, z - z_offset), vec3(0.0f, 1.0f, 0.0f), 1.0f, (float)x / width, (float)z / height, vec3(0.0f, 1.0f, 0.0f));
+            float noise_value = perlin(x * 0.02f, z * 0.02f);
+            float random_noise = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+            float height_variation = (noise_value + random_noise) * scale;
+
+            float y = height_variation * 0.5f;
+            y += ((float)rand() / RAND_MAX) * scale * 0.1f;
+
+            if (y < water_level) {
+                y = water_level + (y - water_level) * 0.7f;
+            }
+
+            float underwater_mask = perlin(x * 0.03f, z * 0.03f);
+            underwater_mask = smoothstep(0.3f, 0.7f, underwater_mask);
+            y = mix(y, water_level - scale * 0.2f, underwater_mask);
+
+            float river_mask = perlin(x * 0.01f, z * 0.01f);
+            river_mask = fabs(river_mask);
+            river_mask = 1.0f - smoothstep(0.0f, river_width, river_mask);
+            y = mix(y, water_level - scale * 0.5f, river_mask);
+
+            if (y < water_level) {
+                y = water_level;
+            }
+
+            // Assign the vertex
+            vertices[z * width + x] = vertex(vec3(x - x_offset, y, z - z_offset),
+                                             vec3(0.0f, 1.0f, 0.0f), 1.0f,
+                                             (float)x / width, (float)z / height,
+                                             vec3(0.0f, 1.0f, 0.0f));
         }
     }
 
     return vertices;
 }
 
-GLuint* generate_hill_indices(int width, int height, int *index_count)
-{
+// Function to generate indices for the grid of vertices
+GLuint* generate_hill_indices(int width, int height, int* index_count) {
     int num_indices = (width - 1) * (height - 1) * 6;
-    GLuint *indices = malloc(num_indices * sizeof(GLuint));
+    GLuint* indices = malloc(num_indices * sizeof(GLuint));
     *index_count = num_indices;
 
     int index = 0;
-    for(int z = 0; z < height - 1; z++)
-    {
-        for(int x = 0; x < width - 1; x++)
-        {
+    for (int z = 0; z < height - 1; z++) {
+        for (int x = 0; x < width - 1; x++) {
             int tl = z * width + x;
             int tr = z * width + x + 1;
             int bl = (z + 1) * width + x;
@@ -247,42 +360,150 @@ GLuint* generate_hill_indices(int width, int height, int *index_count)
     return indices;
 }
 
+vec3_t light_position = {10.0f, 20.0f, 10.0f};
+vec3_t light_color = {1.0f, 1.0f, 1.0f};
+
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
-    // SHADER PROGRAM
-
-    initialize_reflection_refraction_framebuffers(width, height);
-
-    rafgl_raster_load_from_image(&water_normal_raster, "res/images/water_normal.jpg");
+    // WATER
+    rafgl_raster_load_from_image(&water_normal_raster, "res/images/water_normal2.jpg");
     rafgl_texture_init(&water_normal_map_tex);
 
     rafgl_texture_load_from_raster(&water_normal_map_tex, &water_normal_raster);
 
-    //glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
-    //glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id); /* bajndujemo doge teksturu */
 
-    vertices[0] = vertex(vec3( -100.0f,  0.0f,  100.0f), RAFGL_RED, 5.0f, 0.0f, 0.0f, RAFGL_VEC3_Y);
-    vertices[1] = vertex(vec3( -100.0f,  0.0f, -100.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
-    vertices[2] = vertex(vec3(  100.0f,  0.0f,  100.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+    glGenerateMipmap(GL_TEXTURE_2D);
 
-    vertices[3] = vertex(vec3(  100.0f,  0.0f,  100.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
-    vertices[4] = vertex(vec3( -100.0f,  0.0f, -100.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
-    vertices[5] = vertex(vec3(  100.0f,  0.0f, -100.0f), RAFGL_BLUE, 5.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    vertices[0] = vertex(vec3( -1000.0f,  0.0f,  1000.0f), RAFGL_RED, 1.0f, 0.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[1] = vertex(vec3( -1000.0f,  0.0f, -1000.0f), RAFGL_GREEN, 1.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[2] = vertex(vec3(  1000.0f,  0.0f,  1000.0f), RAFGL_GREEN, 1.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+
+    vertices[3] = vertex(vec3(  1000.0f,  0.0f,  1000.0f), RAFGL_GREEN, 1.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[4] = vertex(vec3( -1000.0f,  0.0f, -1000.0f), RAFGL_GREEN, 1.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[5] = vertex(vec3(  1000.0f,  0.0f, -1000.0f), RAFGL_BLUE, 1.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
+
 
     shader_program_id = rafgl_program_create_from_name("custom_water_shader_v1");
+    uni_M = glGetUniformLocation(shader_program_id, "uni_M");
+    uni_VP = glGetUniformLocation(shader_program_id, "uni_VP");
+    uni_phase = glGetUniformLocation(shader_program_id, "uni_phase");
+    uni_camera_pos = glGetUniformLocation(shader_program_id, "uni_camera_pos");
 
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    glBufferData(GL_ARRAY_BUFFER, 6 * sizeof(vertex_t), vertices, GL_STATIC_DRAW);
+
+    /* position */
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) 0);
+
+    /* colour */
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (sizeof(vec3_t)));
+
+    /* alpha */
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t)));
+
+    /* UV coords */
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t) + 1 * sizeof(float)));
+
+    /* normal */
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t) + 3 * sizeof(float)));
+
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+
+    rafgl_raster_load_from_image(&hill_raster, "res/images/rock_texture.jpg");
+    rafgl_texture_init(&hill_texture);
+    rafgl_texture_load_from_raster(&hill_texture, &hill_raster);
+    hill_texture_id = hill_texture.tex_id;
+
+    shader_program_id = rafgl_program_create_from_name("v8water_shader");
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    glBufferData(GL_ARRAY_BUFFER, 6 * sizeof(vertex_t), vertices, GL_STATIC_DRAW);
+
+    /* position */
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) 0);
+
+    /* colour */
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (sizeof(vec3_t)));
+
+    /* alpha */
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t)));
+
+    /* UV coords */
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t) + 1 * sizeof(float)));
+
+    /* normal */
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t) + 3 * sizeof(float)));
+
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+
+
+    lightning_shader_program_id = rafgl_program_create_from_name("custom_depth_lightning_v1");
+
+    // LIGHT SOURCE
+    glGenFramebuffers(1, &depthFBO);
+
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, 1024, 1024, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, depthFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // HILLS
     hill_shader_program_id = rafgl_program_create_from_name("custom_hills_shader_v1");
-
-    //glUseProgram(hill_shader_program_id);
 
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "model"), 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view"), 1, GL_FALSE, (void*) view.m);
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "projection"), 1, GL_FALSE, (void*) projection.m);
 
-    //glUseProgram(shader_program_id);
-
-    vertex_t *hill_vertices = generate_hills(100, 100, 50.0f, &hill_vertex_count);
-    GLuint *hill_indices = generate_hill_indices(100, 100, &hill_index_count);
+    vertex_t *hill_vertices = generate_hills(1000, 1000, 75.0f, &hill_vertex_count, -2.0f, 400);
+    GLuint *hill_indices = generate_hill_indices(1000, 1000, &hill_index_count);
 
     glGenVertexArrays(1, &hill_vao);
     glBindVertexArray(hill_vao);
@@ -297,23 +518,23 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
 
     glBindVertexArray(hill_vao);
 
-    // Position attribute (vec3)
+    // Position (vec3)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, position));
     glEnableVertexAttribArray(0);
 
-    // Color attribute (vec3)
+    // Color (vec3)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
     glEnableVertexAttribArray(1);
 
-    // Alpha attribute (float)
+    // Alpha (float)
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
     glEnableVertexAttribArray(2);
 
-    // Texture coordinates (u, v)
+    // Texture (u, v)
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
     glEnableVertexAttribArray(3);
 
-    // Normal attribute (vec3)
+    // Normal (vec3)
     glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
     glEnableVertexAttribArray(4);
 
@@ -349,27 +570,27 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // Position attribute
+    // Position
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, position));
     glEnableVertexAttribArray(0);
 
-    // Color attribute
+    // Color
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
     glEnableVertexAttribArray(1);
 
-    // Alpha attribute
+    // Alpha
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
     glEnableVertexAttribArray(2);
 
-    // Texture coordinate attribute
+    // Texture coordinate
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
     glEnableVertexAttribArray(3);
 
-    // Normal attribute
+    // Normal
     glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
     glEnableVertexAttribArray(4);
 
-    // VAO unbind
+    // VAO
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
@@ -396,89 +617,57 @@ void render_scene(mat4_t view_projection, float delta_time) {
 
 void render_hills(mat4_t view_projection) {
     glUseProgram(hill_shader_program_id);
-    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+    //glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hill_texture_id);
+    glUniform1i(glGetUniformLocation(hill_shader_program_id, "hillTexture"), 0);
+
     glBindVertexArray(hill_vao);
+    glEnable(GL_DEPTH_TEST);
     glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 }
 
-void render_water(mat4_t view_project, float delta_time) {
+void render_water(mat4_t view_projection, float delta_time) {
     glUseProgram(shader_program_id);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
 
-    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_project.m);
-    glUniform1f(uni_time, time_tick);
-
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(2);
+    glEnableVertexAttribArray(3);
+    glEnableVertexAttribArray(4);
     glBindVertexArray(vao);
+
+    glUniformMatrix4fv(uni_M, 1, GL_FALSE, (void*) model.m);
+    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
+    glUniform1f(uni_phase, time_tick * 0.1f);
+    glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
+    glUniform3f(glGetUniformLocation(shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
+    glUniform3f(glGetUniformLocation(shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
+
     glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    glBindVertexArray(0);
+    glDisableVertexAttribArray(4);
+    glDisableVertexAttribArray(3);
+    glDisableVertexAttribArray(2);
+    glDisableVertexAttribArray(1);
+    glDisableVertexAttribArray(0);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *game_data, void *args) {
-    // rafgl_log_fps(RAFGL_TRUE);
     time_tick += delta_time;
 
-    glEnable(GL_CLIP_DISTANCE0);
-
-    // INPUT
-    if (1) {
-        vec3_t right_dir = v3_cross(camera_up, aim_dir); // Right direction
-        if (game_data->keys_down['D'])
-            camera_position = v3_sub(camera_position, v3_muls(right_dir, move_speed * delta_time));
-        if (game_data->keys_down['A'])
-            camera_position = v3_add(camera_position, v3_muls(right_dir, move_speed * delta_time));
-
-        if (game_data->is_lmb_down) {
-            if (reshow_cursor == 0)
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-
-            float dx = game_data->mouse_pos_x - game_data->raster_width / 2;
-            float dy = game_data->mouse_pos_y - game_data->raster_height / 2;
-
-            if (!last_lmb) {
-                dx = 0;
-                dy = 0;
-            }
-
-            hoffset -= dy / game_data->raster_height;
-            camera_angle += dx / game_data->raster_width;
-
-            glfwSetCursorPos(window, game_data->raster_width / 2, game_data->raster_height / 2);
-            reshow_cursor = 1;
-        } else if (reshow_cursor) {
-            reshow_cursor = 0;
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        }
-        last_lmb = game_data->is_lmb_down;
-
-        aim_dir = vec3(cosf(camera_angle), 0.0f, sinf(camera_angle));
-
-        if (game_data->keys_down['W']) camera_position = v3_add(camera_position, v3_muls(aim_dir, move_speed * delta_time));
-        if (game_data->keys_down['S']) camera_position = v3_sub(camera_position, v3_muls(aim_dir, move_speed * delta_time));
-
-        if (game_data->keys_down[RAFGL_KEY_LEFT_SHIFT]) camera_position.y += move_speed * delta_time;
-        if (game_data->keys_down[RAFGL_KEY_LEFT_CONTROL]) camera_position.y -= move_speed * delta_time;
-        // printf("Camera Position: (%f, %f, %f)\n", camera_position.x, camera_position.y, camera_position.z);
-
-        float aspect = ((float)(game_data->raster_width)) / game_data->raster_height;
-        projection = m4_perspective(fov, aspect, 0.1f, 100.0f);
-
-        if(!game_data->keys_down['T'])
-        {
-            view = m4_look_at(camera_position, v3_add(camera_position, v3_add(aim_dir, vec3(0.0f, hoffset, 0.0f))), camera_up);
-        }
-        else
-        {
-            view = m4_look_at(camera_position, vec3(0.0f, 0.0f, 0.0f), camera_up);
-        }
-
-        if(game_data->keys_pressed[RAFGL_KEY_KP_ADD]) selected_mesh = (selected_mesh + 1) % num_meshes;
-        if(game_data->keys_pressed[RAFGL_KEY_KP_SUBTRACT]) selected_mesh = (selected_mesh + num_meshes - 1) % num_meshes;
-    }
+    light_position.x = 1.0f + sinf(time_tick) * 40.0f;
+    light_position.z = 1.0f + cosf(time_tick) * 40.0f;
 
     model = m4_identity();
-
     view = m4_look_at(camera_position, camera_target, camera_up);
     projection = m4_perspective(fov, (float)game_data->raster_width / game_data->raster_height, 0.1f, 1000.0f);
     view_projection = m4_mul(projection, view);
@@ -493,6 +682,7 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     mat4_t reflected_view = m4_look_at(reflected_camera_pos, camera_target, camera_up);
 
     render_scene(reflected_view, delta_time);
+    render_water(view_projection, delta_time);
 
     // REFRACTION
     bindRefractionFrameBuffer();
@@ -504,16 +694,64 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     unbindCurrentFrameBuffer(game_data->raster_width, game_data->raster_height);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // OTHER
     glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
     render_scene(view_projection, delta_time);
 
-    render_water(view_projection, delta_time);
+    // RENDER LIGHT SOURCE
+    mat4_t light_projection = m4_ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 20.0f);
+    mat4_t light_view = m4_look_at(vec3(0.0f, 10.0f, 0.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+    mat4_t light_space_matrix = m4_mul(light_projection, light_view);
 
-    render_hills(view_projection);
+    if (game_data->keys_down['D'])
+        camera_position = v3_sub(camera_position, v3_muls(v3_cross(camera_up, aim_dir), move_speed * delta_time));
+    if (game_data->keys_down['A'])
+        camera_position = v3_add(camera_position, v3_muls(v3_cross(camera_up, aim_dir), move_speed * delta_time));
 
-    //glfwSwapBuffers(window);
-    //glfwPollEvents();
+    if (game_data->is_lmb_down) {
+        if (reshow_cursor == 0)
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+
+        float dx = game_data->mouse_pos_x - game_data->raster_width / 2;
+        float dy = game_data->mouse_pos_y - game_data->raster_height / 2;
+
+        if (!last_lmb) {
+            dx = 0;
+            dy = 0;
+        }
+
+        hoffset -= dy / game_data->raster_height;
+        camera_angle += dx / game_data->raster_width;
+
+        glfwSetCursorPos(window, game_data->raster_width / 2, game_data->raster_height / 2);
+        reshow_cursor = 1;
+    } else if (reshow_cursor) {
+        reshow_cursor = 0;
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+    last_lmb = game_data->is_lmb_down;
+
+    aim_dir = vec3(cosf(camera_angle), 0.0f, sinf(camera_angle));
+
+    if (game_data->keys_down['W']) camera_position = v3_add(camera_position, v3_muls(aim_dir, move_speed * delta_time));
+    if (game_data->keys_down['S']) camera_position = v3_sub(camera_position, v3_muls(aim_dir, move_speed * delta_time));
+
+    if (game_data->keys_down[RAFGL_KEY_LEFT_SHIFT]) camera_position.y += move_speed * delta_time;
+    if (game_data->keys_down[RAFGL_KEY_LEFT_CONTROL]) camera_position.y -= move_speed * delta_time;
+
+    float aspect = ((float)(game_data->raster_width)) / game_data->raster_height;
+    projection = m4_perspective(fov, aspect, 0.1f, 100.0f);
+
+    if(!game_data->keys_down['T'])
+    {
+        view = m4_look_at(camera_position, v3_add(camera_position, v3_add(aim_dir, vec3(0.0f, hoffset, 0.0f))), camera_up);
+    }
+    else
+    {
+        view = m4_look_at(camera_position, vec3(0.0f, 0.0f, 0.0f), camera_up);
+    }
+
+    if(game_data->keys_pressed[RAFGL_KEY_KP_ADD]) selected_mesh = (selected_mesh + 1) % num_meshes;
+    if(game_data->keys_pressed[RAFGL_KEY_KP_SUBTRACT]) selected_mesh = (selected_mesh + num_meshes - 1) % num_meshes;
 }
 
 void main_state_render(GLFWwindow *window, void *args)
@@ -522,31 +760,74 @@ void main_state_render(GLFWwindow *window, void *args)
     glfwGetFramebufferSize(window, &width, &height);
     glViewport(0, 0, width, height);
 
-    // CLEAR
-    // glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // SKYBOX
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+    glUniform1i(glGetUniformLocation(hill_shader_program_id, "skyboxTexture"), 1);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skybox_shader);
+    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
+    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
+    glBindVertexArray(skybox_mesh.vao_id);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
 
     glEnable(GL_DEPTH_TEST);
-    //glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
 
     float aspect = (float)width / (float)height;
     projection = m4_perspective(fov, aspect, 0.1f, 1000.0f);
+    view_projection = m4_mul(projection, view);
 
-    // SKYBOX RENDER
+    // HILLS
+    glUseProgram(hill_shader_program_id);
+    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
 
-    // WATER RENDER
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hill_texture_id);
+    glUniform1i(glGetUniformLocation(hill_shader_program_id, "hillTexture"), 0);
+
+    glBindVertexArray(hill_vao);
+    glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+
+    // WATER
     glUseProgram(shader_program_id);
+
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
+
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(2);
+    glEnableVertexAttribArray(3);
+    glEnableVertexAttribArray(4);
+    glBindVertexArray(vao);
 
     glUniformMatrix4fv(uni_M, 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
-    glUniform1f(uni_time, time_tick);
+    glUniform1f(uni_phase, time_tick * 0.1f);
     glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
 
-    glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
 
-    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(0);
+    glDisableVertexAttribArray(4);
+    glDisableVertexAttribArray(3);
+    glDisableVertexAttribArray(2);
+    glDisableVertexAttribArray(1);
+    glDisableVertexAttribArray(0);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void main_state_cleanup(GLFWwindow *window, void *args)

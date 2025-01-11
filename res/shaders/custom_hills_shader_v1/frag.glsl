@@ -1,27 +1,34 @@
 #version 330 core
 
-in vec3 fragColor;
-in float height;
+in vec3 ourColor;
+in float ourAlpha;
+in vec2 TexCoord;
+in vec3 Normal;
+in vec3 FragPos;
+in vec3 LightPos;
+in vec3 ViewPos;
 
 out vec4 FragColor;
 
-void main()
-{
-    vec3 lowColor = vec3(0.0, 0.8, 0.0); // green
-    vec3 midColor = vec3(0.8, 0.8, 0.0); // yellow
-    vec3 highColor = vec3(1.0, 1.0, 1.0); // white
+uniform sampler2D hillTexture;
+uniform vec3 light_color;
 
-    float normalizedHeight = clamp(height / 10.0, 0.0, 1.0);
+void main() {
+    float ambientStrength = 0.1;
+    vec3 ambient = ambientStrength * light_color;
 
-    vec3 color;
-    if (normalizedHeight < 0.5)
-    {
-        color = mix(lowColor, midColor, normalizedHeight * 2.0);
-    }
-    else
-    {
-        color = mix(midColor, highColor, (normalizedHeight - 0.5) * 2.0);
-    }
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(LightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * light_color;
 
-    FragColor = vec4(color, 1.0);
+    float specularStrength = 0.5;
+    vec3 viewDir = normalize(ViewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32);
+    vec3 specular = specularStrength * spec * light_color;
+
+    vec3 result = (ambient + diffuse + specular) * ourColor;
+    vec4 texColor = texture(hillTexture, TexCoord);
+    FragColor = texColor * vec4(result, ourAlpha);
 }
