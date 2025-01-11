@@ -1,46 +1,50 @@
 #version 330
 
-in vec2 frag_uv;
-in vec3 frag_position;
+in vec3 pass_colour;
+in vec2 pass_uv;
+in vec3 pass_normal;
+in vec3 pass_world_position;
 
 out vec4 final_colour;
 
-uniform sampler2D reflectionTexture;
-uniform sampler2D refractionTexture;
-uniform vec3 camera_pos;
-uniform float time;
-uniform float refraction_index;
+uniform sampler2D normal_map;
 
-vec3 calculateNormal(vec3 frag_position, float time) {
-    vec3 normal = vec3(
-    sin(frag_position.x * 5.0 + time) * 0.1,
-    1.0,
-    sin(frag_position.z * 5.0 + time) * 0.1
-    );
-    return normalize(normal);
-}
+uniform float uni_phase;
+uniform vec3 uni_camera_pos;
+uniform vec3 light_position;
+uniform vec3 light_color;
 
 void main()
 {
-    vec3 normal = calculateNormal(frag_position, time);
+    vec2 uv_coord = pass_world_position.xz;
 
-    vec3 view_dir = normalize(camera_pos - frag_position);
+    vec2 uv_coord1 = vec2(uv_coord.x + uni_phase * 1.53, uv_coord.y + uni_phase * 1.15);
+    vec2 uv_coord2 = vec2(uv_coord.x + uni_phase * 0.97, uv_coord.y + uni_phase * 1.87);
+    vec2 uv_coord3 = vec2(uv_coord.x + uni_phase * 2.03, uv_coord.y + uni_phase * 1.11);
 
-    vec3 reflect_dir = reflect(-view_dir, normal);
-    vec3 refract_dir = refract(-view_dir, normal, 1.0 / refraction_index);
+    vec3 accum1 = texture(normal_map, uv_coord1).rgb;
+    vec3 accum2 = texture(normal_map, uv_coord2).rgb;
+    vec3 accum3 = texture(normal_map, uv_coord3).rgb;
+    vec3 total = normalize((accum1 + accum2 + accum3));
 
-    vec2 reflect_tex_coords = (reflect_dir.xy) * 0.5 + 0.5;
-    vec2 refract_tex_coords = (refract_dir.xy) * 0.5 + 0.5;
+    float sky_colour_factor = total.x;
+    sky_colour_factor = clamp(sky_colour_factor, 0.0, 1.0);
 
-    reflect_tex_coords = clamp(reflect_tex_coords, 0.0, 1.0);
-    refract_tex_coords = clamp(refract_tex_coords, 0.0, 1.0);
+    vec3 to_camera_vec = normalize(pass_world_position - uni_camera_pos);
 
-    vec4 reflect_color = texture(reflectionTexture, reflect_tex_coords);
-    vec4 refract_color = texture(refractionTexture, refract_tex_coords);
+    vec3 light_dir = normalize(light_position - pass_world_position);
+    float specular_factor = dot(reflect(-light_dir, total), to_camera_vec);
+    specular_factor = clamp(specular_factor, 0.0, 1.0);
+    specular_factor = pow(specular_factor, 20.0);
 
-    float fresnel = pow(1.0 - dot(view_dir, normal), 5.0);
+    vec3 diffuse_color = mix(light_color, light_color, 1);
 
-    vec4 final_reflection = mix(refract_color, reflect_color, fresnel);
+    float diff = max(dot(total, light_dir), 0.0);
+    vec3 diffuse = diff * light_color;
 
-    final_colour = final_reflection;
+    vec3 reflect_dir = reflect(-light_dir, total);
+    float spec = pow(max(dot(to_camera_vec, reflect_dir), 0.0), 32);
+    vec3 specular = spec * light_color;
+
+    final_colour = vec4(diffuse_color + diffuse + specular, 1.0);
 }
