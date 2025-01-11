@@ -4,6 +4,7 @@
 #include <rafgl.h>
 #include <game_constants.h>
 #include <utility.h>
+#include <time.h>
 
 typedef struct _vertex_t
 {                       /* offsets      */
@@ -62,7 +63,7 @@ float move_speed = 0.8f;
 
 float hoffset = -0.35f * M_PIf;
 
-float time = 0.0f;
+float time_tick = 0.0f;
 int reshow_cursor = 0;
 int last_lmb = 0;
 
@@ -83,6 +84,11 @@ static GLuint reflectionDepthBuffer;
 static GLuint refractionFrameBuffer;
 static GLuint refractionTexture;
 static GLuint refractionDepthTexture;
+
+GLuint hill_shader_program_id;
+GLuint hill_vao, hill_vbo, hill_ebo;
+int hill_vertex_count, hill_index_count;
+
 
 GLuint create_framebuffer()
 {
@@ -191,6 +197,56 @@ void frame_buffer_cleanup() {
     glDeleteTextures(1, &refractionDepthTexture);
 }
 
+vertex_t* generate_hills(int width, int height, float scale, int* vertex_count) {
+    int num_vertices = width * height;
+    vertex_t* vertices = (vertex_t*)malloc(num_vertices * sizeof(vertex_t));
+    *vertex_count = num_vertices;
+
+    float x_offset = width / 2.0f;
+    float z_offset = height / 2.0f;
+
+    srand(time(NULL));
+
+    for (int z = 0; z < height; ++z) {
+        for (int x = 0; x < width; ++x) {
+            float random_height = ((float)rand() / RAND_MAX) * scale; // Random height between 0 and scale
+            float y = sinf((x - x_offset) * 0.1f) * cosf((z - z_offset) * 0.1f) * random_height;
+            vertices[z * width + x] = vertex(vec3(x - x_offset, y, z - z_offset), vec3(0.0f, 1.0f, 0.0f), 1.0f, (float)x / width, (float)z / height, vec3(0.0f, 1.0f, 0.0f));
+        }
+    }
+
+    return vertices;
+}
+
+GLuint* generate_hill_indices(int width, int height, int *index_count)
+{
+    int num_indices = (width - 1) * (height - 1) * 6;
+    GLuint *indices = malloc(num_indices * sizeof(GLuint));
+    *index_count = num_indices;
+
+    int index = 0;
+    for(int z = 0; z < height - 1; z++)
+    {
+        for(int x = 0; x < width - 1; x++)
+        {
+            int tl = z * width + x;
+            int tr = z * width + x + 1;
+            int bl = (z + 1) * width + x;
+            int br = (z + 1) * width + x + 1;
+
+            indices[index++] = tl;
+            indices[index++] = bl;
+            indices[index++] = tr;
+
+            indices[index++] = tr;
+            indices[index++] = bl;
+            indices[index++] = br;
+        }
+    }
+
+    return indices;
+}
+
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
     // SHADER PROGRAM
@@ -205,16 +261,63 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     //glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
     //glGenerateMipmap(GL_TEXTURE_2D);
 
-    vertices[0] = vertex(vec3( -1.0f,  0.0f,  1.0f), RAFGL_RED, 5.0f, 0.0f, 0.0f, RAFGL_VEC3_Y);
-    vertices[1] = vertex(vec3( -1.0f,  0.0f, -1.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
-    vertices[2] = vertex(vec3(  1.0f,  0.0f,  1.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[0] = vertex(vec3( -100.0f,  0.0f,  100.0f), RAFGL_RED, 5.0f, 0.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[1] = vertex(vec3( -100.0f,  0.0f, -100.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[2] = vertex(vec3(  100.0f,  0.0f,  100.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
 
-    vertices[3] = vertex(vec3(  1.0f,  0.0f,  1.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
-    vertices[4] = vertex(vec3( -1.0f,  0.0f, -1.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
-    vertices[5] = vertex(vec3(  1.0f,  0.0f, -1.0f), RAFGL_BLUE, 5.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[3] = vertex(vec3(  100.0f,  0.0f,  100.0f), RAFGL_GREEN, 5.0f, 1.0f, 0.0f, RAFGL_VEC3_Y);
+    vertices[4] = vertex(vec3( -100.0f,  0.0f, -100.0f), RAFGL_GREEN, 5.0f, 0.0f, 1.0f, RAFGL_VEC3_Y);
+    vertices[5] = vertex(vec3(  100.0f,  0.0f, -100.0f), RAFGL_BLUE, 5.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
 
     shader_program_id = rafgl_program_create_from_name("custom_water_shader_v1");
 
+    hill_shader_program_id = rafgl_program_create_from_name("custom_hills_shader_v1");
+
+    //glUseProgram(hill_shader_program_id);
+
+    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "model"), 1, GL_FALSE, (void*) model.m);
+    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view"), 1, GL_FALSE, (void*) view.m);
+    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "projection"), 1, GL_FALSE, (void*) projection.m);
+
+    //glUseProgram(shader_program_id);
+
+    vertex_t *hill_vertices = generate_hills(100, 100, 50.0f, &hill_vertex_count);
+    GLuint *hill_indices = generate_hill_indices(100, 100, &hill_index_count);
+
+    glGenVertexArrays(1, &hill_vao);
+    glBindVertexArray(hill_vao);
+
+    glGenBuffers(1, &hill_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, hill_vbo);
+    glBufferData(GL_ARRAY_BUFFER, hill_vertex_count * sizeof(vertex_t), hill_vertices, GL_STATIC_DRAW);
+
+    glGenBuffers(1, &hill_ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, hill_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, hill_index_count * sizeof(GLuint), hill_indices, GL_STATIC_DRAW);
+
+    glBindVertexArray(hill_vao);
+
+    // Position attribute (vec3)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, position));
+    glEnableVertexAttribArray(0);
+
+    // Color attribute (vec3)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
+    glEnableVertexAttribArray(1);
+
+    // Alpha attribute (float)
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
+    glEnableVertexAttribArray(2);
+
+    // Texture coordinates (u, v)
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
+    glEnableVertexAttribArray(3);
+
+    // Normal attribute (vec3)
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
+    glEnableVertexAttribArray(4);
+
+    glBindVertexArray(0); // Unbind VAO after setting it up
 
     uni_M = glGetUniformLocation(shader_program_id, "uni_M");
     uni_VP = glGetUniformLocation(shader_program_id, "uni_VP");
@@ -269,12 +372,15 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     // VAO unbind
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
+
+    free(hill_vertices);
+    free(hill_indices);
 }
 
 void render_scene(mat4_t view_projection, float delta_time) {
     glUseProgram(shader_program_id);
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
-    glUniform1f(uni_time, time);
+    glUniform1f(uni_time, time_tick);
 
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LEQUAL);
@@ -288,6 +394,14 @@ void render_scene(mat4_t view_projection, float delta_time) {
     glDepthFunc(GL_LESS);
 }
 
+void render_hills(mat4_t view_projection) {
+    glUseProgram(hill_shader_program_id);
+    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+    glBindVertexArray(hill_vao);
+    glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+}
+
 void render_water(mat4_t view_project, float delta_time) {
     glUseProgram(shader_program_id);
 
@@ -295,7 +409,7 @@ void render_water(mat4_t view_project, float delta_time) {
     glBindTexture(GL_TEXTURE_2D, reflectionTexture);
 
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_project.m);
-    glUniform1f(uni_time, time);
+    glUniform1f(uni_time, time_tick);
 
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -303,7 +417,7 @@ void render_water(mat4_t view_project, float delta_time) {
 
 void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *game_data, void *args) {
     // rafgl_log_fps(RAFGL_TRUE);
-    time += delta_time;
+    time_tick += delta_time;
 
     glEnable(GL_CLIP_DISTANCE0);
 
@@ -396,6 +510,8 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
 
     render_water(view_projection, delta_time);
 
+    render_hills(view_projection);
+
     //glfwSwapBuffers(window);
     //glfwPollEvents();
 }
@@ -423,7 +539,7 @@ void main_state_render(GLFWwindow *window, void *args)
 
     glUniformMatrix4fv(uni_M, 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
-    glUniform1f(uni_time, time);
+    glUniform1f(uni_time, time_tick);
     glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
 
     glBindVertexArray(vao);
