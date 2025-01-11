@@ -27,12 +27,10 @@ void main()
     vec3 view_dir = normalize(camera_pos - frag_position);
 
     vec3 reflect_dir = reflect(-view_dir, normal);
+    vec3 refract_dir = refract(-view_dir, normal, 1.0 / refraction_index);
 
-    float eta = 1.0 / refraction_index;
-    vec3 refract_dir = refract(-view_dir, normal, eta);
-
-    vec2 reflect_tex_coords = (reflect_dir.xy * 0.5) + 0.5;
-    vec2 refract_tex_coords = (refract_dir.xy * 0.5) + 0.5;
+    vec2 reflect_tex_coords = (reflect_dir.xy) * 0.5 + 0.5;
+    vec2 refract_tex_coords = (refract_dir.xy) * 0.5 + 0.5;
 
     reflect_tex_coords = clamp(reflect_tex_coords, 0.0, 1.0);
     refract_tex_coords = clamp(refract_tex_coords, 0.0, 1.0);
@@ -40,7 +38,7 @@ void main()
     vec4 reflect_color = texture(reflectionTexture, reflect_tex_coords);
     vec4 refract_color = texture(refractionTexture, refract_tex_coords);
 
-    float fresnel = pow(1.0 - dot(view_dir, normal), 3.0);
+    float fresnel = pow(1.0 - dot(view_dir, normal), 5.0);
 
     vec4 final_reflection = mix(refract_color, reflect_color, fresnel);
 
