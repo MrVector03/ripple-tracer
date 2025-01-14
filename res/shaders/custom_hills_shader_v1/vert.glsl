@@ -22,7 +22,7 @@ void main() {
     gl_Position = view_projection * vec4(aPos, 1.0);
     ourColor = aColor;
     ourAlpha = aAlpha;
-    TexCoord = aTexCoord * 100.0; // Scale texture coordinates to repeat the texture
+    TexCoord = aTexCoord;
     Normal = aNormal;
     FragPos = aPos;
     LightPos = light_position;

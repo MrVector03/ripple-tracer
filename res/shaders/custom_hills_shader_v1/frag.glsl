@@ -11,12 +11,14 @@ in vec3 ViewPos;
 out vec4 FragColor;
 
 uniform sampler2D hillTexture;
+uniform sampler2D sandTexture;
+uniform sampler2D grassTexture;
 uniform vec3 light_color;
 uniform vec3 fog_color;
 uniform float fog_density;
+uniform float water_height;
 
 void main() {
-    // Lighting calculations
     float ambientStrength = 0.1;
     vec3 ambient = ambientStrength * light_color;
 
@@ -33,20 +35,32 @@ void main() {
 
     vec3 lighting = ambient + diffuse + specular;
 
-    // Get the texture color
-    vec4 texColor = texture(hillTexture, TexCoord);
+    vec2 scaledTexCoord = TexCoord;
+    vec4 sandColor = texture(sandTexture, scaledTexCoord * 100.0);
+    vec4 hillColor = texture(hillTexture, scaledTexCoord * 100.0);
+    vec4 grassColor = texture(grassTexture, scaledTexCoord * 100.0);
 
-    // Combine texture color with lighting
+    float height = FragPos.y;
+    vec4 texColor;
+    if (height < water_height) {
+        texColor = sandColor;
+    } else if (height < water_height + 4.0) {
+        float t = (height - water_height) / 4.0;
+        texColor = mix(sandColor, hillColor, t);
+    } else if (height < water_height + 8.0) {
+        float t = (height - (water_height + 4.0)) / 3.0;
+        texColor = mix(hillColor, grassColor, t);
+    } else {
+        texColor = grassColor;
+    }
+
     vec3 result = texColor.rgb * lighting;
 
-    // Fog calculation
     float distance = length(FragPos - ViewPos);
     float fog_factor = exp(-fog_density * distance * distance); // Exponential fog
     fog_factor = clamp(fog_factor, 0.0, 1.0);
 
-    // Mix the fog color (sky color) with the final lit texture
     vec3 finalColor = mix(fog_color, result, fog_factor);
 
-    // Output the final fragment color
     FragColor = vec4(finalColor, texColor.a * ourAlpha);
 }
