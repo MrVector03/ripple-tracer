@@ -156,15 +156,23 @@ static GLuint refractionDepthTexture;
 GLuint hill_shader_program_id;
 GLuint hill_vao, hill_vbo, hill_ebo;
 int hill_vertex_count, hill_index_count;
-rafgl_raster_t hill_raster;
-rafgl_texture_t hill_texture;
-static GLuint hill_texture_id;
+rafgl_raster_t hill_raster, hill_sand_raster, hill_grass_raster;
+rafgl_texture_t hill_texture, hill_sand_texture, hill_grass_texture;
+static GLuint hill_texture_id, hill_sand_texture_id, hill_grass_texture_id;
+
+// WATER LEVEL
+float water_level = -4.0f;
 
 // LIGHT SOURCE
 GLuint depthFBO;
 GLuint depthMap;
 GLuint lightning_shader_program_id;
 
+GLuint fog_color_location;
+GLuint fog_density_location;
+
+float fog_density = 0.00001f;
+vec3_t fog_color = {0.1f, 0.1, 0.1f};
 
 GLuint create_framebuffer()
 {
@@ -399,6 +407,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     uni_phase = glGetUniformLocation(shader_program_id, "uni_phase");
     uni_camera_pos = glGetUniformLocation(shader_program_id, "uni_camera_pos");
 
+
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
 
@@ -434,46 +443,38 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glEnable(GL_DEPTH_TEST);
 
+    // HILLS ROCKS
     rafgl_raster_load_from_image(&hill_raster, "res/images/rock_texture.jpg");
     rafgl_texture_init(&hill_texture);
     rafgl_texture_load_from_raster(&hill_texture, &hill_raster);
     hill_texture_id = hill_texture.tex_id;
 
-    shader_program_id = rafgl_program_create_from_name("v8water_shader");
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
+    // HILLS SAND
+    rafgl_raster_load_from_image(&hill_sand_raster, "res/images/sand_texture.jpg");
+    rafgl_texture_init(&hill_sand_texture);
+    rafgl_texture_load_from_raster(&hill_sand_texture, &hill_sand_raster);
+    hill_sand_texture_id = hill_sand_texture.tex_id;
 
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    // HILLS GRASS
+    rafgl_raster_load_from_image(&hill_grass_raster, "res/images/grass_field_texture.jpg");
+    rafgl_texture_init(&hill_grass_texture);
+    rafgl_texture_load_from_raster(&hill_grass_texture, &hill_grass_raster);
+    hill_grass_texture_id = hill_grass_texture.tex_id;
 
-    glBufferData(GL_ARRAY_BUFFER, 6 * sizeof(vertex_t), vertices, GL_STATIC_DRAW);
+    glBindTexture(GL_TEXTURE_2D, hill_texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
-    /* position */
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) 0);
+    glBindTexture(GL_TEXTURE_2D, hill_sand_texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
-    /* colour */
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (sizeof(vec3_t)));
-
-    /* alpha */
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t)));
-
-    /* UV coords */
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t) + 1 * sizeof(float)));
-
-    /* normal */
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*) (2 * sizeof(vec3_t) + 3 * sizeof(float)));
-
-
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glEnable(GL_DEPTH_TEST);
+    glBindTexture(GL_TEXTURE_2D, hill_grass_texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
 
     lightning_shader_program_id = rafgl_program_create_from_name("custom_depth_lightning_v1");
@@ -502,7 +503,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view"), 1, GL_FALSE, (void*) view.m);
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "projection"), 1, GL_FALSE, (void*) projection.m);
 
-    vertex_t *hill_vertices = generate_hills(1000, 1000, 75.0f, &hill_vertex_count, -2.0f, 400);
+    vertex_t *hill_vertices = generate_hills(1000, 1000, 75.0f, &hill_vertex_count, water_level, 400);
     GLuint *hill_indices = generate_hill_indices(1000, 1000, &hill_index_count);
 
     glGenVertexArrays(1, &hill_vao);
@@ -598,7 +599,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     free(hill_indices);
 }
 
-void render_scene(mat4_t view_projection, float delta_time) {
+void render_scene(mat4_t view_projection) {
     glUseProgram(shader_program_id);
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
     glUniform1f(uni_time, time_tick);
@@ -617,19 +618,35 @@ void render_scene(mat4_t view_projection, float delta_time) {
 
 void render_hills(mat4_t view_projection) {
     glUseProgram(hill_shader_program_id);
-    //glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+
+    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
+    glUniform1f(glGetUniformLocation(hill_shader_program_id, "water_height"), water_level);
+
+    // Fog parameters for hills
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hill_texture_id);
     glUniform1i(glGetUniformLocation(hill_shader_program_id, "hillTexture"), 0);
 
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, hill_sand_texture_id);
+    glUniform1i(glGetUniformLocation(hill_shader_program_id, "sandTexture"), 1);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, hill_grass_texture_id);
+    glUniform1i(glGetUniformLocation(hill_shader_program_id, "grassTexture"), 2);
+
     glBindVertexArray(hill_vao);
-    glEnable(GL_DEPTH_TEST);
     glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 }
 
-void render_water(mat4_t view_projection, float delta_time) {
+void render_water(mat4_t view_projection) {
     glUseProgram(shader_program_id);
 
     glEnable(GL_TEXTURE_2D);
@@ -664,8 +681,10 @@ void render_water(mat4_t view_projection, float delta_time) {
 void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *game_data, void *args) {
     time_tick += delta_time;
 
-    light_position.x = 1.0f + sinf(time_tick) * 40.0f;
-    light_position.z = 1.0f + cosf(time_tick) * 40.0f;
+    // rotate light source
+    light_position.x = 10000.0f * cosf(time_tick / 20.0f);
+    light_position.y = 10000.0f * sinf(time_tick / 20.0f);
+
 
     model = m4_identity();
     view = m4_look_at(camera_position, camera_target, camera_up);
@@ -681,21 +700,30 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     reflected_camera_pos.y = -camera_position.y;
     mat4_t reflected_view = m4_look_at(reflected_camera_pos, camera_target, camera_up);
 
-    render_scene(reflected_view, delta_time);
-    render_water(view_projection, delta_time);
+    //render_scene(reflected_view, delta_time);
+    //render_water(view_projection, delta_time);
 
     // REFRACTION
     bindRefractionFrameBuffer();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
-    render_scene(view_projection, delta_time);
+    render_scene(view_projection);
 
     unbindCurrentFrameBuffer(game_data->raster_width, game_data->raster_height);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
-    render_scene(view_projection, delta_time);
+    render_scene(view_projection);
+
+    // ASSIGN FOG UNIFORMS
+    glUseProgram(shader_program_id);
+    glUniform3f(glGetUniformLocation(shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    glUniform1f(glGetUniformLocation(shader_program_id, "fog_density"), fog_density);
+
+    glUseProgram(hill_shader_program_id);
+    glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
 
     // RENDER LIGHT SOURCE
     mat4_t light_projection = m4_ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 20.0f);
@@ -766,12 +794,18 @@ void main_state_render(GLFWwindow *window, void *args)
     // SKYBOX
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glUniform1i(glGetUniformLocation(hill_shader_program_id, "skyboxTexture"), 1);
+    glUniform1i(glGetUniformLocation(skybox_shader, "skyboxTexture"), 1);
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
     glUseProgram(skybox_shader);
     glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
     glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
+
+    // Fog parameters for skybox
+    glUniform3f(glGetUniformLocation(skybox_shader, "fog_color"), fog_color.x, fog_color.y, fog_color.z); // Example fog color
+    glUniform1f(glGetUniformLocation(skybox_shader, "fog_density"), fog_density); // Increased fog density
+    glUniform3f(glGetUniformLocation(skybox_shader, "uni_camera_pos"), camera_position.x, camera_position.y, camera_position.z);
+
     glBindVertexArray(skybox_mesh.vao_id);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
     glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
@@ -786,25 +820,46 @@ void main_state_render(GLFWwindow *window, void *args)
     view_projection = m4_mul(projection, view);
 
     // HILLS
-    glUseProgram(hill_shader_program_id);
-    glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
-    glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
-    glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
-    glUniform3f(glGetUniformLocation(hill_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, hill_texture_id);
-    glUniform1i(glGetUniformLocation(hill_shader_program_id, "hillTexture"), 0);
-
-    glBindVertexArray(hill_vao);
-    glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
+    render_hills(view_projection);
+    // glUseProgram(hill_shader_program_id);
+    //
+    // glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
+    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
+    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
+    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
+    //
+    // // Fog parameters for hills
+    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    // glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
+    //
+    // glActiveTexture(GL_TEXTURE0);
+    // glBindTexture(GL_TEXTURE_2D, hill_texture_id);
+    // glUniform1i(glGetUniformLocation(hill_shader_program_id, "hillTexture"), 0);
+    //
+    // glBindVertexArray(hill_vao);
+    // glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
+    // glBindVertexArray(0);
 
     // WATER
     glUseProgram(shader_program_id);
 
-    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Bind the normal map texture
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
+    glUniform1i(glGetUniformLocation(shader_program_id, "normal_map"), 0);
+
+    // Bind the reflection texture
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+    glUniform1i(glGetUniformLocation(shader_program_id, "reflection_texture"), 1);
+
+    // Bind the refraction texture
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, refractionTexture);
+    glUniform1i(glGetUniformLocation(shader_program_id, "refraction_texture"), 2);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -817,6 +872,8 @@ void main_state_render(GLFWwindow *window, void *args)
     glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
     glUniform1f(uni_phase, time_tick * 0.1f);
     glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
+    glUniform3f(glGetUniformLocation(shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
+    glUniform3f(glGetUniformLocation(shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 

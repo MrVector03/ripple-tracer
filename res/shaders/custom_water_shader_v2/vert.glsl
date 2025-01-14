@@ -11,11 +11,9 @@ out vec2 pass_uv;
 out vec3 pass_normal;
 
 out vec3 pass_world_position;
-out vec3 LightPos;
 
 uniform mat4 uni_M;
 uniform mat4 uni_VP;
-uniform vec3 light_position;
 
 void main()
 {
@@ -28,6 +26,4 @@ void main()
     pass_colour = colour;
     pass_uv = uv;
     pass_normal = (uni_M * vec4(normal, 0.0)).xyz;
-
-    LightPos = light_position;
 }
