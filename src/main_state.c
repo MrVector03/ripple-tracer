@@ -270,6 +270,42 @@ void initialize_reflection_refraction_framebuffers(int width, int height)
     unbindCurrentFrameBuffer(width, height);
 }
 
+void initialize_reflection_refraction_framebuffers_v2(int width, int height) {
+    // Reflection framebuffer
+    glGenFramebuffers(1, &reflectionFrameBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFrameBuffer);
+
+    // Create texture for reflection
+    glGenTextures(1, &reflectionTexture);
+    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflectionTexture, 0);
+
+    // Check framebuffer completeness
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        printf("Reflection Framebuffer not complete!\n");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Refraction framebuffer
+    glGenFramebuffers(1, &refractionFrameBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, refractionFrameBuffer);
+
+    // Create texture for refraction
+    glGenTextures(1, &refractionTexture);
+    glBindTexture(GL_TEXTURE_2D, refractionTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, refractionTexture, 0);
+
+    // Check framebuffer completeness
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        printf("Refraction Framebuffer not complete!\n");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void frame_buffer_cleanup() {
     glDeleteFramebuffers(1, &reflectionFrameBuffer);
     glDeleteTextures(1, &reflectionTexture);
@@ -377,6 +413,8 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     rafgl_raster_load_from_image(&water_normal_raster, "res/images/water_normal2.jpg");
     rafgl_texture_init(&water_normal_map_tex);
 
+    initialize_reflection_refraction_framebuffers(width, height);
+
     rafgl_texture_load_from_raster(&water_normal_map_tex, &water_normal_raster);
 
     glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id); /* bajndujemo doge teksturu */
@@ -401,7 +439,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     vertices[5] = vertex(vec3(  1000.0f,  0.0f, -1000.0f), RAFGL_BLUE, 1.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
 
 
-    shader_program_id = rafgl_program_create_from_name("custom_water_shader_v1");
+    shader_program_id = rafgl_program_create_from_name("custom_water_shader_v3");
     uni_M = glGetUniformLocation(shader_program_id, "uni_M");
     uni_VP = glGetUniformLocation(shader_program_id, "uni_VP");
     uni_phase = glGetUniformLocation(shader_program_id, "uni_phase");
@@ -599,23 +637,6 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     free(hill_indices);
 }
 
-void render_scene(mat4_t view_projection) {
-    glUseProgram(shader_program_id);
-    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
-    glUniform1f(uni_time, time_tick);
-
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(skybox_shader);
-    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
-    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
-    glBindVertexArray(skybox_mesh.vao_id);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS);
-}
-
 void render_hills(mat4_t view_projection) {
     glUseProgram(hill_shader_program_id);
 
@@ -625,7 +646,6 @@ void render_hills(mat4_t view_projection) {
     glUniform3f(glGetUniformLocation(hill_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
     glUniform1f(glGetUniformLocation(hill_shader_program_id, "water_height"), water_level);
 
-    // Fog parameters for hills
     glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
     glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
 
@@ -646,11 +666,68 @@ void render_hills(mat4_t view_projection) {
     glBindVertexArray(0);
 }
 
+void render_scene(mat4_t view_projection, int width, int height) {
+
+    glViewport(0, 0, width, height);
+
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // SKYBOX
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+    glUniform1i(glGetUniformLocation(skybox_shader, "skyboxTexture"), 1);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skybox_shader);
+    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
+    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
+
+    // Fog parameters for skybox
+    glUniform3f(glGetUniformLocation(skybox_shader, "fog_color"), fog_color.x, fog_color.y, fog_color.z); // Example fog color
+    glUniform1f(glGetUniformLocation(skybox_shader, "fog_density"), fog_density); // Increased fog density
+    glUniform3f(glGetUniformLocation(skybox_shader, "uni_camera_pos"), camera_position.x, camera_position.y, camera_position.z);
+
+    glBindVertexArray(skybox_mesh.vao_id);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
+    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+
+    glEnable(GL_DEPTH_TEST);
+
+    float aspect = (float)width / (float)height;
+    projection = m4_perspective(fov, aspect, 0.1f, 1000.0f);
+    view_projection = m4_mul(projection, view);
+
+    // HILLS
+    render_hills(view_projection);
+}
+
+
 void render_water(mat4_t view_projection) {
     glUseProgram(shader_program_id);
 
-    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Bind the normal map texture
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
+    glUniform1i(glGetUniformLocation(shader_program_id, "normal_map"), 0);
+
+    // Bind the reflection texture
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
+    glUniform1i(glGetUniformLocation(shader_program_id, "reflection_texture"), 1);
+
+    // Bind the refraction texture
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, refractionTexture);
+    glUniform1i(glGetUniformLocation(shader_program_id, "refraction_texture"), 2);
+
+    glUniform1f(glGetUniformLocation(shader_program_id, "refraction_index"), 1.33f);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -707,14 +784,14 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     bindRefractionFrameBuffer();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
-    render_scene(view_projection);
+    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 15.0f);
+    render_scene(view_projection, game_data->raster_width, game_data->raster_height);
 
     unbindCurrentFrameBuffer(game_data->raster_width, game_data->raster_height);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 1.0f);
-    render_scene(view_projection);
+    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 15.0f);
+    render_scene(view_projection, game_data->raster_width, game_data->raster_height);
 
     // ASSIGN FOG UNIFORMS
     glUseProgram(shader_program_id);
@@ -786,110 +863,11 @@ void main_state_render(GLFWwindow *window, void *args)
 {
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
-    glViewport(0, 0, width, height);
-
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // SKYBOX
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glUniform1i(glGetUniformLocation(skybox_shader, "skyboxTexture"), 1);
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(skybox_shader);
-    glUniformMatrix4fv(skybox_uni_V, 1, GL_FALSE, (void*) view.m);
-    glUniformMatrix4fv(skybox_uni_P, 1, GL_FALSE, (void*) projection.m);
-
-    // Fog parameters for skybox
-    glUniform3f(glGetUniformLocation(skybox_shader, "fog_color"), fog_color.x, fog_color.y, fog_color.z); // Example fog color
-    glUniform1f(glGetUniformLocation(skybox_shader, "fog_density"), fog_density); // Increased fog density
-    glUniform3f(glGetUniformLocation(skybox_shader, "uni_camera_pos"), camera_position.x, camera_position.y, camera_position.z);
-
-    glBindVertexArray(skybox_mesh.vao_id);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skybox_texture.tex_id);
-    glDrawArrays(GL_TRIANGLES, 0, skybox_mesh.vertex_count);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS);
-    glDepthMask(GL_TRUE);
-
-    glEnable(GL_DEPTH_TEST);
-
-    float aspect = (float)width / (float)height;
-    projection = m4_perspective(fov, aspect, 0.1f, 1000.0f);
-    view_projection = m4_mul(projection, view);
-
-    // HILLS
-    render_hills(view_projection);
-    // glUseProgram(hill_shader_program_id);
-    //
-    // glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view_projection"), 1, GL_FALSE, (void*)view_projection.m);
-    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
-    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
-    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
-    //
-    // // Fog parameters for hills
-    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
-    // glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
-    //
-    // glActiveTexture(GL_TEXTURE0);
-    // glBindTexture(GL_TEXTURE_2D, hill_texture_id);
-    // glUniform1i(glGetUniformLocation(hill_shader_program_id, "hillTexture"), 0);
-    //
-    // glBindVertexArray(hill_vao);
-    // glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
-    // glBindVertexArray(0);
-
-    // WATER
-    glUseProgram(shader_program_id);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // Bind the normal map texture
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, water_normal_map_tex.tex_id);
-    glUniform1i(glGetUniformLocation(shader_program_id, "normal_map"), 0);
-
-    // Bind the reflection texture
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, reflectionTexture);
-    glUniform1i(glGetUniformLocation(shader_program_id, "reflection_texture"), 1);
-
-    // Bind the refraction texture
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, refractionTexture);
-    glUniform1i(glGetUniformLocation(shader_program_id, "refraction_texture"), 2);
-
-    glEnableVertexAttribArray(0);
-    glEnableVertexAttribArray(1);
-    glEnableVertexAttribArray(2);
-    glEnableVertexAttribArray(3);
-    glEnableVertexAttribArray(4);
-    glBindVertexArray(vao);
-
-    glUniformMatrix4fv(uni_M, 1, GL_FALSE, (void*) model.m);
-    glUniformMatrix4fv(uni_VP, 1, GL_FALSE, (void*) view_projection.m);
-    glUniform1f(uni_phase, time_tick * 0.1f);
-    glUniform3f(uni_camera_pos, camera_position.x, camera_position.y, camera_position.z);
-    glUniform3f(glGetUniformLocation(shader_program_id, "light_position"), light_position.x, light_position.y, light_position.z);
-    glUniform3f(glGetUniformLocation(shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
-
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    glBindVertexArray(0);
-    glDisableVertexAttribArray(4);
-    glDisableVertexAttribArray(3);
-    glDisableVertexAttribArray(2);
-    glDisableVertexAttribArray(1);
-    glDisableVertexAttribArray(0);
-
-    glBindTexture(GL_TEXTURE_2D, 0);
+    render_scene(m4_mul(projection, view), width, height);
+    render_water(m4_mul(projection, view));
 }
 
 void main_state_cleanup(GLFWwindow *window, void *args)
 {
     frame_buffer_cleanup();
 }
-
-
