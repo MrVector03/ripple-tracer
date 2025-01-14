@@ -3,6 +3,8 @@
 in vec3 pass_colour;
 in vec2 pass_uv;
 in vec3 pass_normal;
+in vec3 LightPos;
+
 in vec3 pass_world_position;
 
 out vec4 final_colour;
@@ -11,8 +13,10 @@ uniform sampler2D normal_map;
 
 uniform float uni_phase;
 uniform vec3 uni_camera_pos;
-uniform vec3 light_position;
-uniform vec3 light_color;
+uniform vec3 fog_colour;
+uniform float fog_density;
+
+
 
 void main()
 {
@@ -32,19 +36,16 @@ void main()
 
     vec3 to_camera_vec = normalize(pass_world_position - uni_camera_pos);
 
-    vec3 light_dir = normalize(light_position - pass_world_position);
-    float specular_factor = dot(reflect(-light_dir, total), to_camera_vec);
-    specular_factor = clamp(specular_factor, 0.0, 1.0);
-    specular_factor = pow(specular_factor, 20.0);
+    float distance = length(pass_world_position - uni_camera_pos);
+    float fog_factor = exp(-fog_density * distance * distance); // Increase fog density effect
+    fog_factor = clamp(fog_factor, 0.0, 1.0);
 
-    vec3 diffuse_color = mix(light_color, light_color, 1);
+    vec3 lightDir = normalize(LightPos - pass_world_position);
+    float specular_factor = dot(reflect(-lightDir, total.xyz), to_camera_vec);
+    specular_factor = pow(clamp(specular_factor, 0.0, 1.0), 20.0);
 
-    float diff = max(dot(total, light_dir), 0.0);
-    vec3 diffuse = diff * light_color;
+    vec3 diffuse_color = mix(vec3(0.02, 0.02, 0.5), vec3(0.4, 0.6, 0.8), sky_colour_factor);
 
-    vec3 reflect_dir = reflect(-light_dir, total);
-    float spec = pow(max(dot(to_camera_vec, reflect_dir), 0.0), 32);
-    vec3 specular = spec * light_color;
-
-    final_colour = vec4(diffuse_color + diffuse + specular, 1.0);
+    final_colour = vec4(diffuse_color + vec3(1.0, 1.0, 1.0) * specular_factor, 0.5);
+    //final_colour.a = 0.5 + 0.5 * fog_factor;
 }
