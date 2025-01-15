@@ -227,9 +227,9 @@ static GLuint hill_texture_id, hill_sand_texture_id, hill_grass_texture_id;
 GLuint cloud_shader_program_id;
 GLuint cloud_vao, cloud_vbo, cloud_ebo;
 int cloud_vertex_count, cloud_index_count;
-rafgl_raster_t cloud_raster;
-rafgl_texture_t cloud_texture;
-static GLuint cloud_texture_id;
+rafgl_raster_t cloud_raster, cloud_normal_raster;
+rafgl_texture_t cloud_texture, cloud_normal_texture;
+static GLuint cloud_texture_id, cloud_normal_texture_id;
 
 // WATER LEVEL
 float water_level = -4.0f;
@@ -537,7 +537,18 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     rafgl_texture_load_from_raster(&cloud_texture, &cloud_raster);
     cloud_texture_id = cloud_texture.tex_id;
 
+    rafgl_raster_load_from_image(&cloud_normal_raster, "res/images/cloud_normal_map.png");
+    rafgl_texture_init(&cloud_normal_texture);
+    rafgl_texture_load_from_raster(&cloud_normal_texture, &cloud_normal_raster);
+    cloud_normal_texture_id = cloud_normal_texture.tex_id;
+
     glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glBindTexture(GL_TEXTURE_2D, cloud_normal_texture_id);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glGenerateMipmap(GL_TEXTURE_2D);
@@ -548,7 +559,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     // glBindTexture(GL_TEXTURE_2D, 0);
 
-    cloud_shader_program_id = rafgl_program_create_from_name("custom_hills_shader_v2");
+    cloud_shader_program_id = rafgl_program_create_from_name("custom_clouds");
     if (cloud_shader_program_id == 0) {
         printf("Failed to create cloud shader program\n");
     }
@@ -844,6 +855,7 @@ void render_clouds(mat4_t view_projection) {
     glUniform3f(glGetUniformLocation(cloud_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
     glUniform1f(glGetUniformLocation(cloud_shader_program_id, "fog_density"), fog_density);
     glUniform3f(glGetUniformLocation(cloud_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    glUniform1f(glGetUniformLocation(cloud_shader_program_id, "time"), glfwGetTime());
 
     // Bind the cloud texture
     glActiveTexture(GL_TEXTURE0);
