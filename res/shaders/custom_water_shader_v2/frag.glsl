@@ -54,8 +54,7 @@ void main()
 
     vec3 final_color = diffuse_color + vec3(1.0, 1.0, 1.0) * specular_factor;
 
-    // Apply fog
     final_color = mix(fog_colour, final_color, fog_factor);
 
-    final_colour = vec4(final_color, 0.5); // Adjust alpha as needed
+    final_colour = vec4(final_color, 0.5);
 }
