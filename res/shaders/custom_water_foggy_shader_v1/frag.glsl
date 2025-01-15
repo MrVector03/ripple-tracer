@@ -10,19 +10,11 @@ in vec3 pass_world_position;
 out vec4 final_colour;
 
 uniform sampler2D normal_map;
-uniform sampler2D reflection_texture;
-uniform sampler2D refraction_texture;
-
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
 
 uniform float uni_phase;
 uniform vec3 uni_camera_pos;
 uniform vec3 fog_colour;
 uniform float fog_density;
-uniform vec3 light_position;
-uniform vec3 light_color;
 
 void main()
 {
@@ -46,7 +38,7 @@ void main()
     float fog_factor = exp(-fog_density * distance * distance); // Increase fog density effect
     fog_factor = clamp(fog_factor, 0.0, 1.0);
 
-    vec3 lightDir = normalize(light_position - pass_world_position);
+    vec3 lightDir = normalize(LightPos - pass_world_position);
     float specular_factor = dot(reflect(-lightDir, total.xyz), to_camera_vec);
     specular_factor = pow(clamp(specular_factor, 0.0, 1.0), 20.0);
 
