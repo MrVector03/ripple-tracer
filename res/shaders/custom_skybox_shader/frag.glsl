@@ -13,7 +13,6 @@ void main()
 {
     vec4 skybox_color = texture(skybox, tex_coords);
 
-    // Calculate fog factor
     float distance = length(view_position);
     if (fog_density == 0.0)
     {
@@ -23,7 +22,6 @@ void main()
     float fog_factor = exp(-fog_density * distance);
     fog_factor = clamp(fog_factor, 0.0, 1.0);
 
-    // Mix skybox color with fog color
     vec3 final_color = mix(fog_color, skybox_color.rgb, fog_factor);
 
     final_colour = vec4(final_color, skybox_color.a);

@@ -17,12 +17,10 @@ uniform float fog_density;
 uniform float water_height;
 
 void main() {
-    // Specular lighting
     float specularStrength = 0.5;
     vec3 viewDir = normalize(ViewPos - FragPos);
 
 
-    // Texture mapping
     vec2 scaledTexCoord = TexCoord;
 
     vec4 cloudColor = texture(cloudTexture, scaledTexCoord * 10.0);
@@ -33,7 +31,6 @@ void main() {
 
     vec3 result = texColor.rgb;
 
-    // Fog calculation
     vec3 finalColor;
     finalColor = result;
     FragColor = vec4(finalColor, texColor.a * ourAlpha);

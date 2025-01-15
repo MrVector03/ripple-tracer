@@ -20,17 +20,14 @@ uniform float fog_density;
 uniform float water_height;
 
 void main() {
-    // Ambient lighting
     float ambientStrength = 0.1;
     vec3 ambient = ambientStrength * light_color;
 
-    // Diffuse lighting
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(LightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * light_color;
 
-    // Specular lighting
     float specularStrength = 0.5;
     vec3 viewDir = normalize(ViewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
@@ -39,7 +36,6 @@ void main() {
 
     vec3 lighting = ambient + diffuse + specular;
 
-    // Texture mapping
     vec2 scaledTexCoord = TexCoord;
     vec4 sandColor = texture(sandTexture, scaledTexCoord * 100.0);
     vec4 hillColor = texture(hillTexture, scaledTexCoord * 100.0);
@@ -64,7 +60,6 @@ void main() {
 
     vec3 result = texColor.rgb * lighting;
 
-    // Fog calculation
     vec3 finalColor;
     if (height > 30.0) {
         finalColor = result;

@@ -31,6 +31,14 @@ vertex_t vertex(vec3_t pos, vec3_t col, float alpha, float u, float v, vec3_t no
     return vert;
 }
 
+static GLuint shaders[6], mesh_uni_M[6], mesh_uni_VP[6], uni_object_colour[6], uni_light_colour[6], uni_light_direction[6], uni_ambient[6], uni_camera_position[6];
+static const char *shader_names[6] = {"v8PVD", "v8PVS", "v8PerVertex", "v8PPD", "v8PPS", "v8PerPixel"};
+static const char *shader_title[6] = {"Per Vertex Diffuse", "Per Vertex Specular", "Per Vertex Combined", "Per Pixel Diffuse", "Per Pixel Specular", "Per Pixel Combined"};
+static const char *mesh_names[6] = {"res/models/monkey.obj", "res/models/monkey-subdiv.obj", "res/models/suzanne.obj", "res/models/bunny.obj", "res/models/armadillo.obj", "res/models/dragon.obj"};
+
+int current_shader = 0;
+int num_meshes;
+
 static int p[512];
 
 static int grad3[12][3] = {
@@ -102,14 +110,12 @@ float perlin(float x, float y) {
 #define HEIGHT_MAP_HEIGHT 1000
 
 void generate_height_map(vertex_t *vertices, int num_vertices, float height_map[HEIGHT_MAP_WIDTH][HEIGHT_MAP_HEIGHT]) {
-    // Initialize the height map to zero
     for (int i = 0; i < HEIGHT_MAP_WIDTH; i++) {
         for (int j = 0; j < HEIGHT_MAP_HEIGHT; j++) {
             height_map[i][j] = 0.0f;
         }
     }
 
-    // Determine the range of the vertex coordinates
     float min_x = FLT_MAX, max_x = -FLT_MAX;
     float min_z = FLT_MAX, max_z = -FLT_MAX;
     for (int i = 0; i < num_vertices; i++) {
@@ -119,13 +125,11 @@ void generate_height_map(vertex_t *vertices, int num_vertices, float height_map[
         if (vertices[i].position.z > max_z) max_z = vertices[i].position.z;
     }
 
-    // Iterate through the vertices and update the height map
     for (int i = 0; i < num_vertices; i++) {
         int x = (int)((vertices[i].position.x - min_x) / (max_x - min_x) * (HEIGHT_MAP_WIDTH - 1));
         int z = (int)((vertices[i].position.z - min_z) / (max_z - min_z) * (HEIGHT_MAP_HEIGHT - 1));
         float height = vertices[i].position.y;
 
-        // Ensure the coordinates are within bounds
         if (x >= 0 && x < HEIGHT_MAP_WIDTH && z >= 0 && z < HEIGHT_MAP_HEIGHT) {
             height_map[x][z] = height;
         }
@@ -136,7 +140,6 @@ void save_height_map_as_image(float height_map[HEIGHT_MAP_WIDTH][HEIGHT_MAP_HEIG
     unsigned char *image = (unsigned char *)malloc(HEIGHT_MAP_WIDTH * HEIGHT_MAP_HEIGHT);
     float max_height = 0.0f;
 
-    // Find the maximum height value
     for (int i = 0; i < HEIGHT_MAP_WIDTH; i++) {
         for (int j = 0; j < HEIGHT_MAP_HEIGHT; j++) {
             if (height_map[i][j] > max_height) {
@@ -145,14 +148,12 @@ void save_height_map_as_image(float height_map[HEIGHT_MAP_WIDTH][HEIGHT_MAP_HEIG
         }
     }
 
-    // Normalize the height values and convert to grayscale
     for (int i = 0; i < HEIGHT_MAP_WIDTH; i++) {
         for (int j = 0; j < HEIGHT_MAP_HEIGHT; j++) {
             image[i + j * HEIGHT_MAP_WIDTH] = (unsigned char)((height_map[i][j] / max_height) * 255.0f);
         }
     }
 
-    // Save the image as a PNG file
     stbi_write_png(filename, HEIGHT_MAP_WIDTH, HEIGHT_MAP_HEIGHT, 1, image, HEIGHT_MAP_WIDTH);
     free(image);
 }
@@ -215,7 +216,6 @@ static GLuint refractionTexture;
 static GLuint refractionDepthTexture;
 
 // HILLS
-
 GLuint hill_shader_program_id;
 GLuint hill_vao, hill_vbo, hill_ebo;
 int hill_vertex_count, hill_index_count;
@@ -242,7 +242,7 @@ GLuint lightning_shader_program_id;
 GLuint fog_color_location;
 GLuint fog_density_location;
 
-float fog_density = 0.0005f;
+float fog_density = 0.05f;
 vec3_t fog_color = {0.1f, 0.1, 0.1f};
 
 GLuint create_framebuffer()
@@ -346,7 +346,6 @@ void initialize_reflection_refraction_framebuffers_v2(int width, int height) {
     glGenFramebuffers(1, &reflectionFrameBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, reflectionFrameBuffer);
 
-    // Create texture for reflection
     glGenTextures(1, &reflectionTexture);
     glBindTexture(GL_TEXTURE_2D, reflectionTexture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
@@ -354,7 +353,6 @@ void initialize_reflection_refraction_framebuffers_v2(int width, int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflectionTexture, 0);
 
-    // Check framebuffer completeness
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         printf("Reflection Framebuffer not complete!\n");
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -363,7 +361,6 @@ void initialize_reflection_refraction_framebuffers_v2(int width, int height) {
     glGenFramebuffers(1, &refractionFrameBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, refractionFrameBuffer);
 
-    // Create texture for refraction
     glGenTextures(1, &refractionTexture);
     glBindTexture(GL_TEXTURE_2D, refractionTexture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
@@ -371,7 +368,6 @@ void initialize_reflection_refraction_framebuffers_v2(int width, int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, refractionTexture, 0);
 
-    // Check framebuffer completeness
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         printf("Refraction Framebuffer not complete!\n");
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -529,8 +525,29 @@ vec3_t cloud_light_color = {1.0f, 1.0f, 1.0f};
 
 float reflection_uv_offset = 0.0f;
 
+static rafgl_meshPUN_t meshes[6];
+
+GLuint mesh_shader_program;
+GLuint uni_M_mesh, uni_VP_mesh, light_pos_loc, light_color_loc, view_pos_loc, object_color_loc;
+
+int showing_meshes = 1;
+
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
+    num_meshes = sizeof(mesh_names) / sizeof(mesh_names[0]);
+    for (int i = 0; i < num_meshes; i++) {
+        rafgl_log(RAFGL_INFO, "LOADING MESH: %d\n", i + 1);
+        rafgl_meshPUN_init(meshes + i);
+        rafgl_meshPUN_load_from_OBJ(meshes + i, mesh_names[i]);
+    }
+    mesh_shader_program = rafgl_program_create_from_name("custom_mesh_shader_v1");
+    uni_M_mesh = glGetUniformLocation(mesh_shader_program, "uni_M");
+    uni_VP_mesh = glGetUniformLocation(mesh_shader_program, "uni_VP");
+    light_pos_loc = glGetUniformLocation(mesh_shader_program, "light_pos");
+    light_color_loc = glGetUniformLocation(mesh_shader_program, "light_color");
+    view_pos_loc = glGetUniformLocation(mesh_shader_program, "view_pos");
+    object_color_loc = glGetUniformLocation(mesh_shader_program, "object_color");
+
     // CLOUDS
     rafgl_raster_load_from_image(&cloud_raster, "res/images/clouds.png");
     rafgl_texture_init(&cloud_texture);
@@ -598,10 +615,8 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
 
     glBindVertexArray(0);
 
-    // Debug output
     printf("Initialized clouds with %d vertices and %d indices\n", cloud_vertex_count, cloud_index_count);
 
-    // Free allocated memory
     free(cloud_vertices);
     free(cloud_indices);
 
@@ -765,27 +780,22 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
 
     glBindVertexArray(hill_vao);
 
-    // Position (vec3)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, position));
     glEnableVertexAttribArray(0);
 
-    // Color (vec3)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
     glEnableVertexAttribArray(1);
 
-    // Alpha (float)
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
     glEnableVertexAttribArray(2);
 
-    // Texture (u, v)
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
     glEnableVertexAttribArray(3);
 
-    // Normal (vec3)
     glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
     glEnableVertexAttribArray(4);
 
-    glBindVertexArray(0); // Unbind VAO after setting it up
+    glBindVertexArray(0);
 
     uni_M = glGetUniformLocation(shader_program_id, "uni_M");
     uni_VP = glGetUniformLocation(shader_program_id, "uni_VP");
@@ -808,36 +818,28 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     rafgl_meshPUN_init(&skybox_mesh);
     rafgl_meshPUN_load_cube(&skybox_mesh, 1.0f);
 
-    // VAO
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
-    // VBO
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // Position
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, position));
     glEnableVertexAttribArray(0);
 
-    // Color
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
     glEnableVertexAttribArray(1);
 
-    // Alpha
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
     glEnableVertexAttribArray(2);
 
-    // Texture coordinate
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
     glEnableVertexAttribArray(3);
 
-    // Normal
     glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
     glEnableVertexAttribArray(4);
 
-    // VAO
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
@@ -846,10 +848,8 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
 }
 
 void render_clouds(mat4_t view_projection) {
-    // Use the cloud shader program
     glUseProgram(cloud_shader_program_id);
 
-    // Set uniform values
     glUniformMatrix4fv(glGetUniformLocation(cloud_shader_program_id, "view_projection"), 1, GL_FALSE, (float*)&view_projection); // Note: GL_TRUE for row-major
     glUniform3f(glGetUniformLocation(cloud_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
     glUniform3f(glGetUniformLocation(cloud_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
@@ -857,17 +857,14 @@ void render_clouds(mat4_t view_projection) {
     glUniform3f(glGetUniformLocation(cloud_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
     glUniform1f(glGetUniformLocation(cloud_shader_program_id, "time"), glfwGetTime());
 
-    // Bind the cloud texture
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
     glUniform1i(glGetUniformLocation(cloud_shader_program_id, "cloudTexture"), 0);
 
-    // Bind the VAO and draw the elements
     glBindVertexArray(cloud_vao);
     glDrawElements(GL_TRIANGLES, cloud_index_count, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
-    // Unbind the texture
     //glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -920,20 +917,36 @@ void render_skybox(mat4_t view_projection, vec3_t view_position) {
 }
 
 void render_scene(mat4_t view_projection, int width, int height) {
-
     glViewport(0, 0, width, height);
 
     glClearColor(fog_color.x + 0.05, fog_color.y + 0.05, fog_color.z + 0.05, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // SKYBOX
-
     float aspect = (float)width / (float)height;
     projection = m4_perspective(fov, aspect, 0.1f, 1000.0f);
     view_projection = m4_mul(projection, view);
     render_skybox(view_projection, camera_position);
+
     // HILLS
     render_hills(view_projection);
+
+    if (showing_meshes) {
+        glUseProgram(mesh_shader_program);
+
+        mat4_t mesh_model = m4_translation(vec3(2.0f, 0.0f, 0.0f));
+        glUniformMatrix4fv(uni_M_mesh, 1, GL_FALSE, (void*) mesh_model.m);
+
+        glUniformMatrix4fv(uni_VP_mesh, 1, GL_FALSE, (void*) view_projection.m);
+        glUniform3f(light_pos_loc, light_position.x, light_position.y, light_position.z);
+        glUniform3f(light_color_loc, light_color.x, light_color.y, light_color.z);
+        glUniform3f(view_pos_loc, camera_position.x, camera_position.y, camera_position.z);
+        glUniform3f(object_color_loc, 0.0f, 0.3f, 0.7f);
+
+        glBindVertexArray(meshes[selected_mesh].vao_id);
+        glDrawArrays(GL_TRIANGLES, 0, meshes[selected_mesh].vertex_count);
+        glBindVertexArray(0);
+    }
 }
 
 
@@ -997,6 +1010,9 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     view = m4_look_at(camera_position, camera_target, camera_up);
     projection = m4_perspective(fov, (float)game_data->raster_width / game_data->raster_height, 0.1f, 1000.0f);
     view_projection = m4_mul(projection, view);
+
+    if (game_data->keys_down['M'])
+        showing_meshes = !showing_meshes;
 
     // REFLECTION
     bindReflectionFrameBuffer();
@@ -1094,7 +1110,8 @@ void main_state_render(GLFWwindow *window, void *args) {
     glfwGetFramebufferSize(window, &width, &height);
     render_scene(m4_mul(projection, view), width, height);
     render_water(m4_mul(projection, view));
-    render_clouds(m4_mul(projection, view));
+    if (fog_density > 0.0f)
+        render_clouds(m4_mul(projection, view));
 }
 
 void main_state_cleanup(GLFWwindow *window, void *args)
