@@ -13,6 +13,7 @@ out vec4 FragColor;
 uniform sampler2D hillTexture;
 uniform sampler2D sandTexture;
 uniform sampler2D grassTexture;
+uniform sampler2D cloudTexture;
 uniform vec3 light_color;
 uniform vec3 fog_color;
 uniform float fog_density;
@@ -43,6 +44,7 @@ void main() {
     vec4 sandColor = texture(sandTexture, scaledTexCoord * 100.0);
     vec4 hillColor = texture(hillTexture, scaledTexCoord * 100.0);
     vec4 grassColor = texture(grassTexture, scaledTexCoord * 100.0);
+    vec4 cloudColor = texture(cloudTexture, scaledTexCoord * 10.0);
 
     float height = FragPos.y;
     vec4 texColor;
@@ -54,18 +56,24 @@ void main() {
     } else if (height < water_height + 8.0) {
         float t = (height - (water_height + 4.0)) / 4.0;
         texColor = mix(hillColor, grassColor, t);
-    } else {
+    } else if (height < water_height + 50.0) {
         texColor = grassColor;
+    } else {
+        texColor = cloudColor;
     }
 
     vec3 result = texColor.rgb * lighting;
 
     // Fog calculation
-    float distance = length(FragPos - ViewPos);
-    float fog_factor = exp(-fog_density * distance * distance); // Exponential fog
-    fog_factor = clamp(fog_factor, 0.0, 1.0);
-
-    vec3 finalColor = mix(fog_color, result, fog_factor);
+    vec3 finalColor;
+    if (height > 30.0) {
+        finalColor = result;
+    } else {
+        float distance = length(FragPos - ViewPos);
+        float fog_factor = exp(-fog_density * distance * distance); // Exponential fog
+        fog_factor = clamp(fog_factor, 0.0, 1.0);
+        finalColor = mix(fog_color, result, fog_factor);
+    }
 
     FragColor = vec4(finalColor, texColor.a * ourAlpha);
 }

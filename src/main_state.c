@@ -97,6 +97,7 @@ float perlin(float x, float y) {
     return lerp(lerpX1, lerpX2, v);
 }
 
+// HEIGHT MAP
 #define HEIGHT_MAP_WIDTH 1000
 #define HEIGHT_MAP_HEIGHT 1000
 
@@ -221,6 +222,14 @@ int hill_vertex_count, hill_index_count;
 rafgl_raster_t hill_raster, hill_sand_raster, hill_grass_raster;
 rafgl_texture_t hill_texture, hill_sand_texture, hill_grass_texture;
 static GLuint hill_texture_id, hill_sand_texture_id, hill_grass_texture_id;
+
+// CLOUDS
+GLuint cloud_shader_program_id;
+GLuint cloud_vao, cloud_vbo, cloud_ebo;
+int cloud_vertex_count, cloud_index_count;
+rafgl_raster_t cloud_raster;
+rafgl_texture_t cloud_texture;
+static GLuint cloud_texture_id;
 
 // WATER LEVEL
 float water_level = -4.0f;
@@ -439,8 +448,54 @@ vertex_t* generate_hills(int width, int height, float scale, int* vertex_count, 
     return vertices;
 }
 
+vertex_t* generate_clouds(int width, int height, float cloud_height, int* vertex_count) {
+    int num_vertices = width * height;
+    vertex_t* vertices = (vertex_t*)malloc(num_vertices * sizeof(vertex_t));
+    *vertex_count = num_vertices;
+
+    float x_offset = width / 2.0f;
+    float z_offset = height / 2.0f;
+
+    for (int z = 0; z < height; ++z) {
+        for (int x = 0; x < width; ++x) {
+            vertices[z * width + x] = vertex(vec3(x - x_offset, cloud_height, z - z_offset),
+                                             vec3(1.0f, 1.0f, 1.0f), 1.0f,
+                                             (float)x / width, (float)z / height,
+                                             vec3(0.0f, -1.0f, 0.0f)); // Normal pointing downwards
+        }
+    }
+
+    return vertices;
+}
+
 // Function to generate indices for the grid of vertices
 GLuint* generate_hill_indices(int width, int height, int* index_count) {
+    int num_indices = (width - 1) * (height - 1) * 6;
+    GLuint* indices = malloc(num_indices * sizeof(GLuint));
+    *index_count = num_indices;
+
+    int index = 0;
+    for (int z = 0; z < height - 1; z++) {
+        for (int x = 0; x < width - 1; x++) {
+            int tl = z * width + x;
+            int tr = z * width + x + 1;
+            int bl = (z + 1) * width + x;
+            int br = (z + 1) * width + x + 1;
+
+            indices[index++] = tl;
+            indices[index++] = bl;
+            indices[index++] = tr;
+
+            indices[index++] = tr;
+            indices[index++] = bl;
+            indices[index++] = br;
+        }
+    }
+
+    return indices;
+}
+
+GLuint* generate_cloud_indices(int width, int height, int* index_count) {
     int num_indices = (width - 1) * (height - 1) * 6;
     GLuint* indices = malloc(num_indices * sizeof(GLuint));
     *index_count = num_indices;
@@ -469,10 +524,76 @@ GLuint* generate_hill_indices(int width, int height, int* index_count) {
 vec3_t light_position = {10.0f, 20.0f, 10.0f};
 vec3_t light_color = {1.0f, 1.0f, 1.0f};
 
+vec3_t cloud_light_position = {0.0f, 30.0f, 0.0f};
+vec3_t cloud_light_color = {1.0f, 1.0f, 1.0f};
+
 float reflection_uv_offset = 0.0f;
 
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
+    // CLOUDS
+    rafgl_raster_load_from_image(&cloud_raster, "res/images/clouds.png");
+    rafgl_texture_init(&cloud_texture);
+    rafgl_texture_load_from_raster(&cloud_texture, &cloud_raster);
+    cloud_texture_id = cloud_texture.tex_id;
+
+    glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    // glBindTexture(GL_TEXTURE_2D, 0);
+
+    cloud_shader_program_id = rafgl_program_create_from_name("custom_hills_shader_v2");
+    if (cloud_shader_program_id == 0) {
+        printf("Failed to create cloud shader program\n");
+    }
+
+    glUniformMatrix4fv(glGetUniformLocation(cloud_shader_program_id, "model"), 1, GL_FALSE, (void*) model.m);
+    glUniformMatrix4fv(glGetUniformLocation(cloud_shader_program_id, "view_projection"), 1, GL_FALSE, (void*) view_projection.m);
+
+    // Generate cloud vertices and indices
+    vertex_t* cloud_vertices = generate_clouds(1000, 1000, 50.0f, &cloud_vertex_count); // Adjust cloud height as needed
+    GLuint* cloud_indices = generate_cloud_indices(1000, 1000, &cloud_index_count);
+
+    // Set up VAO, VBO, and EBO for clouds
+    glGenVertexArrays(1, &cloud_vao);
+    glBindVertexArray(cloud_vao);
+
+    glGenBuffers(1, &cloud_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, cloud_vbo);
+    glBufferData(GL_ARRAY_BUFFER, cloud_vertex_count * sizeof(vertex_t), cloud_vertices, GL_STATIC_DRAW);
+
+    glGenBuffers(1, &cloud_ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cloud_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, cloud_index_count * sizeof(GLuint), cloud_indices, GL_STATIC_DRAW);
+
+    glBindVertexArray(cloud_vao);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,  sizeof(vertex_t), (void*)offsetof(vertex_t, position));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, colour));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, alpha));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, u));
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(vertex_t), (void*)offsetof(vertex_t, normal));
+
+    glBindVertexArray(0);
+
+    // Debug output
+    printf("Initialized clouds with %d vertices and %d indices\n", cloud_vertex_count, cloud_index_count);
+
+    // Free allocated memory
+    free(cloud_vertices);
+    free(cloud_indices);
+
     // WATER
     rafgl_raster_load_from_image(&water_normal_raster, "res/images/water_normal2.jpg");
     rafgl_texture_init(&water_normal_map_tex);
@@ -563,6 +684,12 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     rafgl_texture_load_from_raster(&hill_grass_texture, &hill_grass_raster);
     hill_grass_texture_id = hill_grass_texture.tex_id;
 
+    // CLOUDS USING HILLS SHADER
+    glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     glBindTexture(GL_TEXTURE_2D, hill_texture_id);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -604,6 +731,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "model"), 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view"), 1, GL_FALSE, (void*) view.m);
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "projection"), 1, GL_FALSE, (void*) projection.m);
+
 
     vertex_t *hill_vertices = generate_hills(1000, 1000, 75.0f, &hill_vertex_count, water_level, 400);
     int num_hills_vertices = hill_vertex_count;
@@ -706,6 +834,31 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     free(hill_indices);
 }
 
+void render_clouds(mat4_t view_projection) {
+    // Use the cloud shader program
+    glUseProgram(cloud_shader_program_id);
+
+    // Set uniform values
+    glUniformMatrix4fv(glGetUniformLocation(cloud_shader_program_id, "view_projection"), 1, GL_FALSE, (float*)&view_projection); // Note: GL_TRUE for row-major
+    glUniform3f(glGetUniformLocation(cloud_shader_program_id, "light_color"), light_color.x, light_color.y, light_color.z);
+    glUniform3f(glGetUniformLocation(cloud_shader_program_id, "view_position"), camera_position.x, camera_position.y, camera_position.z);
+    glUniform1f(glGetUniformLocation(cloud_shader_program_id, "fog_density"), fog_density);
+    glUniform3f(glGetUniformLocation(cloud_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+
+    // Bind the cloud texture
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
+    glUniform1i(glGetUniformLocation(cloud_shader_program_id, "cloudTexture"), 0);
+
+    // Bind the VAO and draw the elements
+    glBindVertexArray(cloud_vao);
+    glDrawElements(GL_TRIANGLES, cloud_index_count, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+
+    // Unbind the texture
+    //glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 void render_hills(mat4_t view_projection) {
     glUseProgram(hill_shader_program_id);
 
@@ -729,6 +882,10 @@ void render_hills(mat4_t view_projection) {
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, hill_grass_texture_id);
     glUniform1i(glGetUniformLocation(hill_shader_program_id, "grassTexture"), 2);
+
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, cloud_texture_id);
+    glUniform1i(glGetUniformLocation(hill_shader_program_id, "cloudTexture"), 3);
 
     glBindVertexArray(hill_vao);
     glDrawElements(GL_TRIANGLES, hill_index_count, GL_UNSIGNED_INT, 0);
@@ -833,50 +990,52 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     light_position.x = 10000.0f * cosf(time_tick / 20.0f);
     light_position.y = 10000.0f * sinf(time_tick / 20.0f);
 
+    printf("%f %f %f\n", camera_position.x, camera_position.y, camera_position.z);
+
     if (game_data->keys_down['Q'])
         reflection_uv_offset += 1.0f;
     else if (game_data->keys_down['E'])
         reflection_uv_offset -= 1.0f;
 
-    model = m4_identity();
-    view = m4_look_at(camera_position, camera_target, camera_up);
-    projection = m4_perspective(fov, (float)game_data->raster_width / game_data->raster_height, 0.1f, 1000.0f);
-    view_projection = m4_mul(projection, view);
-
-    // REFLECTION
-    bindReflectionFrameBuffer();
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glUniform4f(location_plane, 0.0f, 1.0f, 0.0f, 1.0f);
-    vec3_t reflected_camera_pos = camera_position;
-    reflected_camera_pos.y = -camera_position.y;
-    mat4_t reflected_view = m4_look_at(reflected_camera_pos, camera_target, camera_up);
-
-    //render_scene(reflected_view, delta_time);
-    //render_water(view_projection, delta_time);
-
-    // REFRACTION
-    bindRefractionFrameBuffer();
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 15.0f);
-    render_scene(view_projection, game_data->raster_width, game_data->raster_height);
-
-    unbindCurrentFrameBuffer(game_data->raster_width, game_data->raster_height);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 15.0f);
-    render_scene(view_projection, game_data->raster_width, game_data->raster_height);
-
-    // ASSIGN FOG UNIFORMS
-    glUseProgram(shader_program_id);
-    glUniform3f(glGetUniformLocation(shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
-    glUniform1f(glGetUniformLocation(shader_program_id, "fog_density"), fog_density);
-    glUniform1f(glGetUniformLocation(shader_program_id, "reflection_uv_scale"), reflection_uv_offset);
-
-    glUseProgram(hill_shader_program_id);
-    glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
-    glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
+    // model = m4_identity();
+    // view = m4_look_at(camera_position, camera_target, camera_up);
+    // projection = m4_perspective(fov, (float)game_data->raster_width / game_data->raster_height, 0.1f, 1000.0f);
+    // view_projection = m4_mul(projection, view);
+    //
+    // // REFLECTION
+    // bindReflectionFrameBuffer();
+    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    //
+    // glUniform4f(location_plane, 0.0f, 1.0f, 0.0f, 1.0f);
+    // vec3_t reflected_camera_pos = camera_position;
+    // reflected_camera_pos.y = -camera_position.y;
+    // mat4_t reflected_view = m4_look_at(reflected_camera_pos, camera_target, camera_up);
+    //
+    // //render_scene(reflected_view, delta_time);
+    // //render_water(view_projection, delta_time);
+    //
+    // // REFRACTION
+    // bindRefractionFrameBuffer();
+    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    //
+    // glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 15.0f);
+    // render_scene(view_projection, game_data->raster_width, game_data->raster_height);
+    //
+    // unbindCurrentFrameBuffer(game_data->raster_width, game_data->raster_height);
+    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    //
+    // glUniform4f(location_plane, 0.0f, -1.0f, 0.0f, 15.0f);
+    // render_scene(view_projection, game_data->raster_width, game_data->raster_height);
+    //
+    // // ASSIGN FOG UNIFORMS
+    // glUseProgram(shader_program_id);
+    // glUniform3f(glGetUniformLocation(shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    // glUniform1f(glGetUniformLocation(shader_program_id, "fog_density"), fog_density);
+    // glUniform1f(glGetUniformLocation(shader_program_id, "reflection_uv_scale"), reflection_uv_offset);
+    //
+    // glUseProgram(hill_shader_program_id);
+    // glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
+    // glUniform1f(glGetUniformLocation(hill_shader_program_id, "fog_density"), fog_density);
 
     // RENDER LIGHT SOURCE
     mat4_t light_projection = m4_ortho(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 20.0f);
@@ -935,12 +1094,12 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     if(game_data->keys_pressed[RAFGL_KEY_KP_SUBTRACT]) selected_mesh = (selected_mesh + num_meshes - 1) % num_meshes;
 }
 
-void main_state_render(GLFWwindow *window, void *args)
-{
+void main_state_render(GLFWwindow *window, void *args) {
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
     render_scene(m4_mul(projection, view), width, height);
     render_water(m4_mul(projection, view));
+    render_clouds(m4_mul(projection, view));
 }
 
 void main_state_cleanup(GLFWwindow *window, void *args)
