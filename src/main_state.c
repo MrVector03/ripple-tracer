@@ -1,3 +1,4 @@
+#include <float.h>
 #include <main_state.h>
 #include <glad/glad.h>
 #include <math.h>
@@ -5,6 +6,7 @@
 #include <game_constants.h>
 #include <utility.h>
 #include <time.h>
+#include "stb_image_write.h"
 
 typedef struct _vertex_t
 {                       /* offsets      */
@@ -94,6 +96,66 @@ float perlin(float x, float y) {
     float lerpX2 = lerp(gradAB, gradBB, u);
     return lerp(lerpX1, lerpX2, v);
 }
+
+#define HEIGHT_MAP_WIDTH 1000
+#define HEIGHT_MAP_HEIGHT 1000
+
+void generate_height_map(vertex_t *vertices, int num_vertices, float height_map[HEIGHT_MAP_WIDTH][HEIGHT_MAP_HEIGHT]) {
+    // Initialize the height map to zero
+    for (int i = 0; i < HEIGHT_MAP_WIDTH; i++) {
+        for (int j = 0; j < HEIGHT_MAP_HEIGHT; j++) {
+            height_map[i][j] = 0.0f;
+        }
+    }
+
+    // Determine the range of the vertex coordinates
+    float min_x = FLT_MAX, max_x = -FLT_MAX;
+    float min_z = FLT_MAX, max_z = -FLT_MAX;
+    for (int i = 0; i < num_vertices; i++) {
+        if (vertices[i].position.x < min_x) min_x = vertices[i].position.x;
+        if (vertices[i].position.x > max_x) max_x = vertices[i].position.x;
+        if (vertices[i].position.z < min_z) min_z = vertices[i].position.z;
+        if (vertices[i].position.z > max_z) max_z = vertices[i].position.z;
+    }
+
+    // Iterate through the vertices and update the height map
+    for (int i = 0; i < num_vertices; i++) {
+        int x = (int)((vertices[i].position.x - min_x) / (max_x - min_x) * (HEIGHT_MAP_WIDTH - 1));
+        int z = (int)((vertices[i].position.z - min_z) / (max_z - min_z) * (HEIGHT_MAP_HEIGHT - 1));
+        float height = vertices[i].position.y;
+
+        // Ensure the coordinates are within bounds
+        if (x >= 0 && x < HEIGHT_MAP_WIDTH && z >= 0 && z < HEIGHT_MAP_HEIGHT) {
+            height_map[x][z] = height;
+        }
+    }
+}
+
+void save_height_map_as_image(float height_map[HEIGHT_MAP_WIDTH][HEIGHT_MAP_HEIGHT], const char *filename) {
+    unsigned char *image = (unsigned char *)malloc(HEIGHT_MAP_WIDTH * HEIGHT_MAP_HEIGHT);
+    float max_height = 0.0f;
+
+    // Find the maximum height value
+    for (int i = 0; i < HEIGHT_MAP_WIDTH; i++) {
+        for (int j = 0; j < HEIGHT_MAP_HEIGHT; j++) {
+            if (height_map[i][j] > max_height) {
+                max_height = height_map[i][j];
+            }
+        }
+    }
+
+    // Normalize the height values and convert to grayscale
+    for (int i = 0; i < HEIGHT_MAP_WIDTH; i++) {
+        for (int j = 0; j < HEIGHT_MAP_HEIGHT; j++) {
+            image[i + j * HEIGHT_MAP_WIDTH] = (unsigned char)((height_map[i][j] / max_height) * 255.0f);
+        }
+    }
+
+    // Save the image as a PNG file
+    stbi_write_png(filename, HEIGHT_MAP_WIDTH, HEIGHT_MAP_HEIGHT, 1, image, HEIGHT_MAP_WIDTH);
+    free(image);
+}
+
 
 vertex_t vertices[6];
 
@@ -407,13 +469,15 @@ GLuint* generate_hill_indices(int width, int height, int* index_count) {
 vec3_t light_position = {10.0f, 20.0f, 10.0f};
 vec3_t light_color = {1.0f, 1.0f, 1.0f};
 
+float reflection_uv_offset = 0.0f;
+
 void main_state_init(GLFWwindow *window, void *args, int width, int height)
 {
     // WATER
     rafgl_raster_load_from_image(&water_normal_raster, "res/images/water_normal2.jpg");
     rafgl_texture_init(&water_normal_map_tex);
 
-    initialize_reflection_refraction_framebuffers(width, height);
+    initialize_reflection_refraction_framebuffers_v2(width, height);
 
     rafgl_texture_load_from_raster(&water_normal_map_tex, &water_normal_raster);
 
@@ -542,6 +606,11 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "projection"), 1, GL_FALSE, (void*) projection.m);
 
     vertex_t *hill_vertices = generate_hills(1000, 1000, 75.0f, &hill_vertex_count, water_level, 400);
+    int num_hills_vertices = hill_vertex_count;
+    float height_map[HEIGHT_MAP_WIDTH][HEIGHT_MAP_HEIGHT];
+    generate_height_map((float*)hill_vertices, num_hills_vertices, height_map);
+    save_height_map_as_image(height_map, "height_map.png");
+
     GLuint *hill_indices = generate_hill_indices(1000, 1000, &hill_index_count);
 
     glGenVertexArrays(1, &hill_vao);
@@ -762,6 +831,10 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     light_position.x = 10000.0f * cosf(time_tick / 20.0f);
     light_position.y = 10000.0f * sinf(time_tick / 20.0f);
 
+    if (game_data->keys_down['Q'])
+        reflection_uv_offset += 1.0f;
+    else if (game_data->keys_down['E'])
+        reflection_uv_offset -= 1.0f;
 
     model = m4_identity();
     view = m4_look_at(camera_position, camera_target, camera_up);
@@ -797,6 +870,7 @@ void main_state_update(GLFWwindow *window, float delta_time, rafgl_game_data_t *
     glUseProgram(shader_program_id);
     glUniform3f(glGetUniformLocation(shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
     glUniform1f(glGetUniformLocation(shader_program_id, "fog_density"), fog_density);
+    glUniform1f(glGetUniformLocation(shader_program_id, "reflection_uv_scale"), reflection_uv_offset);
 
     glUseProgram(hill_shader_program_id);
     glUniform3f(glGetUniformLocation(hill_shader_program_id, "fog_color"), fog_color.x, fog_color.y, fog_color.z);
