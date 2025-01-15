@@ -233,7 +233,7 @@ GLuint lightning_shader_program_id;
 GLuint fog_color_location;
 GLuint fog_density_location;
 
-float fog_density = 0.00001f;
+float fog_density = 0.05f;
 vec3_t fog_color = {0.1f, 0.1, 0.1f};
 
 GLuint create_framebuffer()
@@ -503,7 +503,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     vertices[5] = vertex(vec3(  1000.0f,  0.0f, -1000.0f), RAFGL_BLUE, 1.0f, 1.0f, 1.0f, RAFGL_VEC3_Y);
 
 
-    shader_program_id = rafgl_program_create_from_name("custom_water_shader_v3");
+    shader_program_id = rafgl_program_create_from_name("custom_water_foggy_shader_v1");
     uni_M = glGetUniformLocation(shader_program_id, "uni_M");
     uni_VP = glGetUniformLocation(shader_program_id, "uni_VP");
     uni_phase = glGetUniformLocation(shader_program_id, "uni_phase");
@@ -599,7 +599,7 @@ void main_state_init(GLFWwindow *window, void *args, int width, int height)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     // HILLS
-    hill_shader_program_id = rafgl_program_create_from_name("custom_hills_shader_v1");
+    hill_shader_program_id = rafgl_program_create_from_name("custom_hills_shader_v2");
 
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "model"), 1, GL_FALSE, (void*) model.m);
     glUniformMatrix4fv(glGetUniformLocation(hill_shader_program_id, "view"), 1, GL_FALSE, (void*) view.m);
@@ -797,6 +797,8 @@ void render_water(mat4_t view_projection) {
     glUniform1i(glGetUniformLocation(shader_program_id, "refraction_texture"), 2);
 
     glUniform1f(glGetUniformLocation(shader_program_id, "refraction_index"), 1.33f);
+
+    glUniform3fv(glGetUniformLocation(shader_program_id, "fog_colour"), 1, (float*)&fog_color);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
